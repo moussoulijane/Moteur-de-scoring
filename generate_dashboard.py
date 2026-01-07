@@ -220,47 +220,41 @@ def prepare_features(df: pd.DataFrame, target_col: str) -> pd.DataFrame:
     return X
 
 
-def train_lightgbm(X_train, y_train, X_val, y_val):
-    """Entraîne un modèle LightGBM."""
-    try:
-        import lightgbm as lgb
-        
-        params = {
-            'objective': 'binary',
-            'metric': 'auc',
-            'boosting_type': 'gbdt',
-            'num_leaves': 31,
-            'learning_rate': 0.05,
-            'feature_fraction': 0.9,
-            'bagging_fraction': 0.8,
-            'bagging_freq': 5,
-            'verbose': -1,
-            'n_estimators': 500,
-            'random_state': 42
-        }
-        
-        model = lgb.LGBMClassifier(**params)
-        model.fit(
-            X_train, y_train,
-            eval_set=[(X_val, y_val)],
-            callbacks=[lgb.early_stopping(50, verbose=False)]
-        )
-        
-        return model, 'LightGBM'
-        
-    except ImportError:
-        logger.warning("LightGBM non disponible, utilisation de RandomForest")
-        from sklearn.ensemble import RandomForestClassifier
-        
-        model = RandomForestClassifier(
-            n_estimators=200,
-            max_depth=10,
-            random_state=42,
-            n_jobs=-1
-        )
-        model.fit(X_train, y_train)
-        
-        return model, 'RandomForest'
+def train_model(X_train, y_train, X_val, y_val):
+    """Entraîne un modèle XGBoost."""
+    import xgboost as xgb
+    
+    # Calculer le ratio pour le déséquilibre des classes
+    scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
+    
+    params = {
+        'objective': 'binary:logistic',
+        'eval_metric': 'auc',
+        'max_depth': 6,
+        'learning_rate': 0.05,
+        'n_estimators': 500,
+        'subsample': 0.8,
+        'colsample_bytree': 0.8,
+        'min_child_weight': 5,
+        'reg_alpha': 0.1,
+        'reg_lambda': 1.0,
+        'scale_pos_weight': scale_pos_weight,
+        'random_state': 42,
+        'verbosity': 0,
+        'use_label_encoder': False
+    }
+    
+    model = xgb.XGBClassifier(**params)
+    
+    model.fit(
+        X_train, y_train,
+        eval_set=[(X_val, y_val)],
+        verbose=False
+    )
+    
+    logger.info(f"   Modèle XGBoost entraîné avec {model.best_iteration} itérations")
+    
+    return model, 'XGBoost'
 
 
 def calculate_all_metrics(y_true, y_pred, y_proba=None):
@@ -458,7 +452,7 @@ def generate_excel_summary(metrics, thresholds, model_name, output_path):
     
     # Ajuster largeurs
     ws.column_dimensions['A'].width = 35
-    ws.column_dimensions['B'].width = 20
+    ws.column_dimensions['B'].width = 20|
     ws.column_dimensions['C'].width = 15
     ws.column_dimensions['D'].width = 15
     
@@ -484,7 +478,7 @@ def generate_excel_by_category(df_test, y_true, y_pred, y_proba, cat_cols, outpu
     wb = Workbook()
     ws = wb.active
     ws.title = "Vue ensemble"
-    ws['A1'] = "PERFORMANCE PAR CATÉGORIE"
+    ws['A1'    ws.title =لاVue ensemble"E"
     ws['A1'].font = Font(bold=True, size=16)
     
     for cat_col in cat_cols:
@@ -710,8 +704,8 @@ def main():
     logger.info(f"   Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
     
     # 6. Entraîner
-    logger.info("\n🚀 Entraînement du modèle...")
-    model, model_name = train_lightgbm(X_train, y_train, X_val, y_val)
+    logger.info("\n🚀 Entraînement du modèle XGBoost...")
+    model, model_name = train_model(X_train, y_train, X_val, y_val)
     
     # 7. Prédire
     y_pred = model.predict(X_test)
