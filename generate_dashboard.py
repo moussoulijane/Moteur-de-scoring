@@ -1,717 +1,760 @@
 #!/usr/bin/env python3
 """
-GÉNÉRATION DU DASHBOARD DE RÉSULTATS
-=====================================
-Crée un dashboard HTML interactif avec toutes les métriques
+Pipeline Simplifié et Robuste - Classification Réclamations Bancaires
+======================================================================
+Version simplifiée qui gère tous les types de données problématiques.
 
 Usage:
-    python scripts/generate_dashboard.py
-    
-Résultat:
-    data/results/dashboard.html
+    python run_simple.py --data path/to/data.xlsx --output path/to/outputs
 """
+
 import pandas as pd
-import json
+import numpy as np
+import argparse
+import logging
 from pathlib import Path
-import sys
+from datetime import datetime
+from sklearn.model_selection import train_test_split, StratifiedKFold
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score,
+    roc_auc_score, confusion_matrix, brier_score_loss, classification_report
+)
+import warnings
+warnings.filterwarnings('ignore')
 
-# Ajouter le répertoire parent au path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Configuration du logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-from src.utils.logger import setup_logger
 
-logger = setup_logger(__name__)
-
-
-def generate_dashboard(
-    predictions_path='data/results/predictions.csv',
-    output_path='data/results/dashboard.html'
-):
-    """Génère un dashboard HTML avec toutes les métriques"""
+def analyze_dataframe(df: pd.DataFrame) -> dict:
+    """Analyse le DataFrame et retourne un rapport détaillé."""
+    report = {
+        'shape': df.shape,
+        'columns': {},
+        'problematic': []
+    }
     
-    logger.info("=" * 80)
-    logger.info("📊 GÉNÉRATION DU DASHBOARD")
-    logger.info("=" * 80)
+    logger.info(f"\n{'='*60}")
+    logger.info("ANALYSE DU DATASET")
+    logger.info(f"{'='*60}")
+    logger.info(f"Dimensions: {df.shape[0]} lignes x {df.shape[1]} colonnes")
     
-    # 1. Charger les prédictions
-    logger.info(f"\n📂 Chargement des prédictions...")
-    try:
-        df = pd.read_csv(predictions_path)
-        logger.info(f"✅ {len(df):,} prédictions chargées")
-    except FileNotFoundError:
-        logger.error(f"❌ Fichier non trouvé: {predictions_path}")
-        logger.info("\n💡 Lancez d'abord:")
-        logger.info("   python scripts/04_score_predictions.py --input data/raw/modeling_base2.xlsx")
-        sys.exit(1)
-    
-    # 2. Calculer les métriques globales
-    logger.info(f"\n📊 Calcul des métriques globales...")
-    
-    n_total = len(df)
-    n_rejet = len(df[df['decision'] == 'REJET_AUTO'])
-    n_validation = len(df[df['decision'] == 'VALIDATION_AUTO'])
-    n_audit = len(df[df['decision'] == 'AUDIT_HUMAIN'])
-    n_auto = n_rejet + n_validation
-    taux_auto = (n_auto / n_total) * 100
-    
-    # Erreurs (si colonne Fondée existe)
-    has_ground_truth = 'Fondée' in df.columns
-    
-    if has_ground_truth:
-        fp = len(df[(df['decision'] == 'VALIDATION_AUTO') & (df['Fondée'] == 0)])
-        fn = len(df[(df['decision'] == 'REJET_AUTO') & (df['Fondée'] == 1)])
-        vp = len(df[(df['decision'] == 'VALIDATION_AUTO') & (df['Fondée'] == 1)])
-        vn = len(df[(df['decision'] == 'REJET_AUTO') & (df['Fondée'] == 0)])
+    for col in df.columns:
+        dtype = str(df[col].dtype)
+        nunique = df[col].nunique()
+        null_count = df[col].isna().sum()
         
-        taux_fp = (fp / n_validation * 100) if n_validation > 0 else 0
-        taux_fn = (fn / n_rejet * 100) if n_rejet > 0 else 0
-        precision_rejet = (vn / n_rejet * 100) if n_rejet > 0 else 0
-        precision_validation = (vp / n_validation * 100) if n_validation > 0 else 0
-    else:
-        fp = fn = vp = vn = 0
-        taux_fp = taux_fn = precision_rejet = precision_validation = 0
+        report['columns'][col] = {
+            'dtype': dtype,
+            'nunique': nunique,
+            'nulls': null_count
+        }
+        
+        # Identifier les colonnes problématiques
+        if 'datetime' in dtype or 'timedelta' in dtype:
+            report['problematic'].append((col, 'datetime'))
+        elif dtype == 'bool':
+            report['problematic'].append((col, 'boolean'))
+        elif dtype == 'object' and nunique > 500:
+            report['problematic'].append((col, 'high_cardinality'))
     
-    # 3. Métriques par famille
-    logger.info(f"\n📊 Calcul des métriques par famille...")
+    if report['problematic']:
+        logger.info(f"\nColonnes nécessitant un traitement spécial:")
+        for col, reason in report['problematic']:
+            logger.info(f"  - {col}: {reason}")
     
-    famille_stats = []
+    return report
+
+
+def detect_target(df: pd.DataFrame) -> str:
+    """Détecte la colonne cible."""
+    # Chercher par nom
+    for col in df.columns:
+        if 'fond' in col.lower():
+            logger.info(f"Colonne cible détectée: {col}")
+            return col
     
-    if 'Famille Produit' in df.columns:
-        for famille in sorted(df['Famille Produit'].unique()):
-            df_fam = df[df['Famille Produit'] == famille]
+    # Chercher une colonne binaire
+    for col in df.columns:
+        unique_vals = df[col].dropna().unique()
+        if len(unique_vals) == 2:
+            if set(str(v).lower() for v in unique_vals).issubset(
+                {'0', '1', 'oui', 'non', 'o', 'n', 'true', 'false', 'yes', 'no'}
+            ):
+                logger.info(f"Colonne cible potentielle détectée: {col}")
+                return col
+    
+    raise ValueError("Impossible de détecter la colonne cible automatiquement")
+
+
+def detect_category_columns(df: pd.DataFrame, target_col: str) -> list:
+    """Détecte les colonnes catégorielles pour l'analyse."""
+    cat_cols = []
+    
+    for col in df.columns:
+        if col == target_col:
+            continue
+        
+        col_lower = col.lower()
+        
+        # Chercher par nom
+        if any(x in col_lower for x in ['famille', 'categ', 'produit', 'segment', 'type', 'motif']):
+            if df[col].dtype == 'object' and 2 <= df[col].nunique() <= 100:
+                cat_cols.append(col)
+    
+    logger.info(f"Colonnes catégorielles pour analyse: {cat_cols[:3]}")
+    return cat_cols[:3]
+
+
+def prepare_target(df: pd.DataFrame, target_col: str) -> pd.Series:
+    """Prépare la variable cible en format binaire."""
+    y = df[target_col].copy()
+    
+    if y.dtype == 'object':
+        y = y.apply(lambda x: 1 if str(x).lower() in ['oui', 'yes', '1', 'fondée', 'fondee', 'true', 'o'] else 0)
+    elif y.dtype == 'bool':
+        y = y.astype(int)
+    
+    y = y.fillna(0).astype(int)
+    
+    logger.info(f"Distribution cible: {y.mean():.1%} positifs (fondées)")
+    return y
+
+
+def prepare_features(df: pd.DataFrame, target_col: str) -> pd.DataFrame:
+    """Prépare les features en gérant tous les types de données problématiques."""
+    
+    # Colonnes à exclure
+    exclude_patterns = ['id', 'date', 'dt_', '_dt', 'timestamp', 'datetime', 'num_', 'numero']
+    
+    X = df.copy()
+    
+    # Supprimer la colonne cible
+    if target_col in X.columns:
+        X = X.drop(columns=[target_col])
+    
+    # Identifier et traiter chaque colonne
+    cols_to_drop = []
+    label_encoders = {}
+    
+    for col in X.columns:
+        col_lower = col.lower()
+        
+        # Exclure les colonnes par pattern de nom
+        if any(pattern in col_lower for pattern in exclude_patterns):
+            cols_to_drop.append(col)
+            continue
+        
+        try:
+            # Gérer datetime
+            if pd.api.types.is_datetime64_any_dtype(X[col]):
+                # Extraire features utiles
+                X[f'{col}_month'] = X[col].dt.month.fillna(0).astype(int)
+                X[f'{col}_dow'] = X[col].dt.dayofweek.fillna(0).astype(int)
+                cols_to_drop.append(col)
+                continue
             
-            n_total_fam = len(df_fam)
-            n_rejet_fam = len(df_fam[df_fam['decision'] == 'REJET_AUTO'])
-            n_validation_fam = len(df_fam[df_fam['decision'] == 'VALIDATION_AUTO'])
-            n_audit_fam = len(df_fam[df_fam['decision'] == 'AUDIT_HUMAIN'])
-            n_auto_fam = n_rejet_fam + n_validation_fam
-            taux_auto_fam = (n_auto_fam / n_total_fam * 100) if n_total_fam > 0 else 0
+            # Gérer timedelta
+            if pd.api.types.is_timedelta64_dtype(X[col]):
+                X[col] = X[col].dt.total_seconds().fillna(0)
+                continue
             
-            # Erreurs par famille
-            if has_ground_truth:
-                fp_fam = len(df_fam[(df_fam['decision'] == 'VALIDATION_AUTO') & (df_fam['Fondée'] == 0)])
-                fn_fam = len(df_fam[(df_fam['decision'] == 'REJET_AUTO') & (df_fam['Fondée'] == 1)])
-            else:
-                fp_fam = fn_fam = 0
+            # Gérer bool
+            if X[col].dtype == 'bool':
+                X[col] = X[col].astype(int)
+                continue
             
-            famille_stats.append({
-                'Famille': famille,
-                'Total': n_total_fam,
-                'Rejet': n_rejet_fam,
-                'Validation': n_validation_fam,
-                'Audit': n_audit_fam,
-                'Automatisé': n_auto_fam,
-                'Taux_Auto': taux_auto_fam,
-                'Faux_Positifs': fp_fam,
-                'Faux_Négatifs': fn_fam
+            # Gérer object/category
+            if X[col].dtype == 'object' or str(X[col].dtype) == 'category':
+                # Vérifier si c'est un booléen caché
+                unique_vals = set(str(v).lower() for v in X[col].dropna().unique())
+                if unique_vals.issubset({'oui', 'non', 'o', 'n', 'true', 'false', '0', '1', 'yes', 'no'}):
+                    X[col] = X[col].apply(
+                        lambda x: 1 if str(x).lower() in ['oui', 'o', 'true', '1', 'yes'] else 0 if pd.notna(x) else 0
+                    ).astype(int)
+                else:
+                    # Label encoding
+                    le = LabelEncoder()
+                    X[col] = X[col].astype(str).fillna('_MISSING_')
+                    X[col] = le.fit_transform(X[col])
+                    label_encoders[col] = le
+                continue
+            
+            # Vérifier si numérique
+            if pd.api.types.is_numeric_dtype(X[col]):
+                X[col] = X[col].fillna(X[col].median() if X[col].notna().any() else 0)
+                continue
+            
+            # Essayer de convertir en numérique
+            try:
+                X[col] = pd.to_numeric(X[col], errors='coerce').fillna(0)
+            except:
+                cols_to_drop.append(col)
+                
+        except Exception as e:
+            logger.warning(f"Erreur avec colonne '{col}': {e}")
+            cols_to_drop.append(col)
+    
+    # Supprimer les colonnes problématiques
+    X = X.drop(columns=[c for c in cols_to_drop if c in X.columns])
+    
+    # S'assurer que tout est numérique
+    for col in X.columns:
+        if not pd.api.types.is_numeric_dtype(X[col]):
+            try:
+                X[col] = pd.to_numeric(X[col], errors='coerce').fillna(0)
+            except:
+                X = X.drop(columns=[col])
+    
+    # Remplir les NaN restants
+    X = X.fillna(0)
+    
+    logger.info(f"Features préparées: {X.shape[1]} colonnes")
+    logger.info(f"Colonnes exclues: {len(cols_to_drop)}")
+    
+    return X
+
+
+def train_lightgbm(X_train, y_train, X_val, y_val):
+    """Entraîne un modèle LightGBM."""
+    try:
+        import lightgbm as lgb
+        
+        params = {
+            'objective': 'binary',
+            'metric': 'auc',
+            'boosting_type': 'gbdt',
+            'num_leaves': 31,
+            'learning_rate': 0.05,
+            'feature_fraction': 0.9,
+            'bagging_fraction': 0.8,
+            'bagging_freq': 5,
+            'verbose': -1,
+            'n_estimators': 500,
+            'random_state': 42
+        }
+        
+        model = lgb.LGBMClassifier(**params)
+        model.fit(
+            X_train, y_train,
+            eval_set=[(X_val, y_val)],
+            callbacks=[lgb.early_stopping(50, verbose=False)]
+        )
+        
+        return model, 'LightGBM'
+        
+    except ImportError:
+        logger.warning("LightGBM non disponible, utilisation de RandomForest")
+        from sklearn.ensemble import RandomForestClassifier
+        
+        model = RandomForestClassifier(
+            n_estimators=200,
+            max_depth=10,
+            random_state=42,
+            n_jobs=-1
+        )
+        model.fit(X_train, y_train)
+        
+        return model, 'RandomForest'
+
+
+def calculate_all_metrics(y_true, y_pred, y_proba=None):
+    """Calcule toutes les métriques."""
+    metrics = {
+        'accuracy': accuracy_score(y_true, y_pred),
+        'precision_class_0': precision_score(y_true, y_pred, pos_label=0, zero_division=0),
+        'precision_class_1': precision_score(y_true, y_pred, pos_label=1, zero_division=0),
+        'recall_class_0': recall_score(y_true, y_pred, pos_label=0, zero_division=0),
+        'recall_class_1': recall_score(y_true, y_pred, pos_label=1, zero_division=0),
+        'f1_class_0': f1_score(y_true, y_pred, pos_label=0, zero_division=0),
+        'f1_class_1': f1_score(y_true, y_pred, pos_label=1, zero_division=0),
+        'f1_weighted': f1_score(y_true, y_pred, average='weighted', zero_division=0),
+        'confusion_matrix': confusion_matrix(y_true, y_pred)
+    }
+    
+    if y_proba is not None:
+        metrics['roc_auc'] = roc_auc_score(y_true, y_proba)
+        metrics['brier_score'] = brier_score_loss(y_true, y_proba)
+    
+    return metrics
+
+
+def optimize_thresholds(y_true, y_proba):
+    """Optimise les seuils de décision."""
+    best_result = None
+    best_score = -1
+    
+    for t_low in np.arange(0.10, 0.45, 0.02):
+        for t_high in np.arange(0.55, 0.90, 0.02):
+            if t_high <= t_low:
+                continue
+            
+            mask_rej = y_proba <= t_low
+            mask_val = y_proba >= t_high
+            
+            n_rej = mask_rej.sum()
+            n_val = mask_val.sum()
+            
+            if n_rej == 0 or n_val == 0:
+                continue
+            
+            prec_rej = (y_true[mask_rej] == 0).mean()
+            prec_val = (y_true[mask_val] == 1).mean()
+            automation = (n_rej + n_val) / len(y_true)
+            
+            # Score: privilégier précision puis automatisation
+            if prec_rej >= 0.95 and prec_val >= 0.93:
+                score = automation + prec_rej * 0.1 + prec_val * 0.1
+                if score > best_score:
+                    best_score = score
+                    best_result = {
+                        'threshold_low': t_low,
+                        'threshold_high': t_high,
+                        'precision_rejection': prec_rej,
+                        'precision_validation': prec_val,
+                        'automation_rate': automation,
+                        'n_rejection': int(n_rej),
+                        'n_validation': int(n_val),
+                        'n_audit': int(len(y_true) - n_rej - n_val)
+                    }
+    
+    if best_result is None:
+        # Fallback
+        t_low, t_high = 0.3, 0.7
+        mask_rej = y_proba <= t_low
+        mask_val = y_proba >= t_high
+        
+        best_result = {
+            'threshold_low': t_low,
+            'threshold_high': t_high,
+            'precision_rejection': (y_true[mask_rej] == 0).mean() if mask_rej.sum() > 0 else 0,
+            'precision_validation': (y_true[mask_val] == 1).mean() if mask_val.sum() > 0 else 0,
+            'automation_rate': (mask_rej.sum() + mask_val.sum()) / len(y_true),
+            'n_rejection': int(mask_rej.sum()),
+            'n_validation': int(mask_val.sum()),
+            'n_audit': int(len(y_true) - mask_rej.sum() - mask_val.sum())
+        }
+    
+    return best_result
+
+
+def generate_excel_summary(metrics, thresholds, model_name, output_path):
+    """Génère le résumé Excel des performances."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    
+    HEADER_FILL = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+    HEADER_FONT = Font(color="FFFFFF", bold=True)
+    SUCCESS_FILL = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    WARNING_FILL = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+    ERROR_FILL = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    BORDER = Border(
+        left=Side(style='thin'), right=Side(style='thin'),
+        top=Side(style='thin'), bottom=Side(style='thin')
+    )
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Performance"
+    
+    # Titre
+    ws['A1'] = "RAPPORT DE PERFORMANCE - CLASSIFICATION RÉCLAMATIONS"
+    ws['A1'].font = Font(bold=True, size=16, color="1F4E79")
+    ws.merge_cells('A1:D1')
+    
+    ws['A2'] = f"Modèle: {model_name} | Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    
+    # Métriques Classification
+    row = 4
+    ws.cell(row=row, column=1, value="MÉTRIQUES DE CLASSIFICATION").font = Font(bold=True, size=12)
+    
+    row += 1
+    headers = ["Métrique", "Valeur", "Objectif", "Statut"]
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=row, column=col, value=h)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.border = BORDER
+    
+    metrics_list = [
+        ("Accuracy", metrics['accuracy'], 0.90),
+        ("F1-Score Weighted", metrics['f1_weighted'], 0.95),
+        ("Précision Rejet (classe 0)", metrics['precision_class_0'], 0.97),
+        ("Précision Validation (classe 1)", metrics['precision_class_1'], 0.95),
+        ("Recall Rejet", metrics['recall_class_0'], 0.90),
+        ("Recall Validation", metrics['recall_class_1'], 0.90),
+        ("AUC-ROC", metrics.get('roc_auc', 0), 0.98),
+    ]
+    
+    for name, value, threshold in metrics_list:
+        row += 1
+        ws.cell(row=row, column=1, value=name).border = BORDER
+        cell = ws.cell(row=row, column=2, value=value)
+        cell.number_format = '0.0000'
+        cell.border = BORDER
+        ws.cell(row=row, column=3, value=f"≥{threshold:.0%}").border = BORDER
+        
+        if value >= threshold:
+            status = "✓ OK"
+            cell.fill = SUCCESS_FILL
+        elif value >= threshold - 0.05:
+            status = "⚠ Proche"
+            cell.fill = WARNING_FILL
+        else:
+            status = "✗ À améliorer"
+            cell.fill = ERROR_FILL
+        ws.cell(row=row, column=4, value=status).border = BORDER
+    
+    # Métriques Business
+    row += 3
+    ws.cell(row=row, column=1, value="MÉTRIQUES BUSINESS").font = Font(bold=True, size=12)
+    
+    row += 1
+    for col, h in enumerate(["Métrique", "Valeur"], 1):
+        cell = ws.cell(row=row, column=col, value=h)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.border = BORDER
+    
+    business_data = [
+        ("Seuil Rejet", f"{thresholds['threshold_low']:.2f}"),
+        ("Seuil Validation", f"{thresholds['threshold_high']:.2f}"),
+        ("Taux Automatisation", f"{thresholds['automation_rate']:.1%}"),
+        ("Précision Rejets Auto", f"{thresholds['precision_rejection']:.1%}"),
+        ("Précision Validations Auto", f"{thresholds['precision_validation']:.1%}"),
+        ("Nb Rejets Auto", thresholds['n_rejection']),
+        ("Nb Validations Auto", thresholds['n_validation']),
+        ("Nb Audits Manuels", thresholds['n_audit']),
+    ]
+    
+    for name, value in business_data:
+        row += 1
+        ws.cell(row=row, column=1, value=name).border = BORDER
+        ws.cell(row=row, column=2, value=value).border = BORDER
+    
+    # Matrice de confusion
+    row += 3
+    ws.cell(row=row, column=1, value="MATRICE DE CONFUSION").font = Font(bold=True, size=12)
+    
+    cm = metrics['confusion_matrix']
+    row += 1
+    ws.cell(row=row, column=2, value="Prédit: Non Fondée")
+    ws.cell(row=row, column=3, value="Prédit: Fondée")
+    
+    row += 1
+    ws.cell(row=row, column=1, value="Réel: Non Fondée")
+    ws.cell(row=row, column=2, value=cm[0, 0]).fill = SUCCESS_FILL
+    ws.cell(row=row, column=3, value=cm[0, 1]).fill = ERROR_FILL
+    
+    row += 1
+    ws.cell(row=row, column=1, value="Réel: Fondée")
+    ws.cell(row=row, column=2, value=cm[1, 0]).fill = WARNING_FILL
+    ws.cell(row=row, column=3, value=cm[1, 1]).fill = SUCCESS_FILL
+    
+    # Ajuster largeurs
+    ws.column_dimensions['A'].width = 35
+    ws.column_dimensions['B'].width = 20
+    ws.column_dimensions['C'].width = 15
+    ws.column_dimensions['D'].width = 15
+    
+    wb.save(output_path)
+    logger.info(f"✓ Résumé performance: {output_path}")
+
+
+def generate_excel_by_category(df_test, y_true, y_pred, y_proba, cat_cols, output_path):
+    """Génère le rapport par catégorie."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Border, Side
+    
+    HEADER_FILL = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+    HEADER_FONT = Font(color="FFFFFF", bold=True)
+    SUCCESS_FILL = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    WARNING_FILL = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+    ERROR_FILL = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    BORDER = Border(
+        left=Side(style='thin'), right=Side(style='thin'),
+        top=Side(style='thin'), bottom=Side(style='thin')
+    )
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Vue ensemble"
+    ws['A1'] = "PERFORMANCE PAR CATÉGORIE"
+    ws['A1'].font = Font(bold=True, size=16)
+    
+    for cat_col in cat_cols:
+        if cat_col not in df_test.columns:
+            continue
+        
+        ws_cat = wb.create_sheet(cat_col[:31])
+        ws_cat['A1'] = f"Performance par {cat_col}"
+        ws_cat['A1'].font = Font(bold=True, size=14)
+        
+        results = []
+        for cat in df_test[cat_col].unique():
+            mask = df_test[cat_col] == cat
+            if mask.sum() < 5:
+                continue
+            
+            cat_y_true = y_true[mask]
+            cat_y_pred = y_pred[mask]
+            
+            results.append({
+                'Catégorie': str(cat)[:40],
+                'N': int(mask.sum()),
+                'Taux Fondées': float(cat_y_true.mean()),
+                'Accuracy': float(accuracy_score(cat_y_true, cat_y_pred)),
+                'Précision': float(precision_score(cat_y_true, cat_y_pred, zero_division=0)),
+                'Recall': float(recall_score(cat_y_true, cat_y_pred, zero_division=0)),
+                'F1': float(f1_score(cat_y_true, cat_y_pred, zero_division=0))
             })
         
-        df_familles = pd.DataFrame(famille_stats).sort_values('Automatisé', ascending=False)
-    else:
-        df_familles = pd.DataFrame()
-    
-    # 4. Générer le HTML
-    logger.info(f"\n🎨 Génération du HTML...")
-    
-    html_content = f"""
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard Scoring Réclamations</title>
-    <style>
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
+        if not results:
+            continue
         
-        body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 20px;
-            min-height: 100vh;
-        }}
+        results_df = pd.DataFrame(results).sort_values('F1', ascending=False)
         
-        .container {{
-            max-width: 1400px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            padding: 40px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-        }}
+        row = 3
+        headers = list(results_df.columns)
+        for col, h in enumerate(headers, 1):
+            cell = ws_cat.cell(row=row, column=col, value=h)
+            cell.fill = HEADER_FILL
+            cell.font = HEADER_FONT
+            cell.border = BORDER
         
-        h1 {{
-            color: #2d3748;
-            font-size: 2.5em;
-            margin-bottom: 10px;
-            text-align: center;
-        }}
-        
-        .subtitle {{
-            text-align: center;
-            color: #718096;
-            font-size: 1.1em;
-            margin-bottom: 40px;
-        }}
-        
-        .metrics-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 40px;
-        }}
-        
-        .metric-card {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px;
-            border-radius: 15px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-            transition: transform 0.3s;
-        }}
-        
-        .metric-card:hover {{
-            transform: translateY(-5px);
-        }}
-        
-        .metric-card.success {{
-            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-        }}
-        
-        .metric-card.warning {{
-            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-        }}
-        
-        .metric-card.info {{
-            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-        }}
-        
-        .metric-value {{
-            font-size: 3em;
-            font-weight: bold;
-            margin: 10px 0;
-        }}
-        
-        .metric-label {{
-            font-size: 0.9em;
-            opacity: 0.9;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }}
-        
-        .section {{
-            margin-top: 40px;
-        }}
-        
-        .section-title {{
-            color: #2d3748;
-            font-size: 1.8em;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 3px solid #667eea;
-        }}
-        
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            background: white;
-            border-radius: 10px;
-            overflow: hidden;
-            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
-        }}
-        
-        thead {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }}
-        
-        th, td {{
-            padding: 15px;
-            text-align: left;
-        }}
-        
-        th {{
-            font-weight: 600;
-            text-transform: uppercase;
-            font-size: 0.85em;
-            letter-spacing: 1px;
-        }}
-        
-        tbody tr {{
-            border-bottom: 1px solid #e2e8f0;
-            transition: background 0.2s;
-        }}
-        
-        tbody tr:hover {{
-            background: #f7fafc;
-        }}
-        
-        tbody tr:last-child {{
-            border-bottom: none;
-        }}
-        
-        .rank {{
-            font-size: 1.5em;
-            font-weight: bold;
-        }}
-        
-        .badge {{
-            display: inline-block;
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 0.85em;
-            font-weight: 600;
-        }}
-        
-        .badge-success {{
-            background: #c6f6d5;
-            color: #22543d;
-        }}
-        
-        .badge-warning {{
-            background: #fed7d7;
-            color: #742a2a;
-        }}
-        
-        .badge-info {{
-            background: #bee3f8;
-            color: #2c5282;
-        }}
-        
-        .progress-bar {{
-            width: 100%;
-            height: 25px;
-            background: #e2e8f0;
-            border-radius: 15px;
-            overflow: hidden;
-            margin-top: 10px;
-        }}
-        
-        .progress-fill {{
-            height: 100%;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: 600;
-            font-size: 0.85em;
-            transition: width 1s ease;
-        }}
-        
-        .alert {{
-            padding: 20px;
-            border-radius: 10px;
-            margin: 20px 0;
-        }}
-        
-        .alert-success {{
-            background: #c6f6d5;
-            border-left: 5px solid #38a169;
-            color: #22543d;
-        }}
-        
-        .alert-warning {{
-            background: #fed7d7;
-            border-left: 5px solid #e53e3e;
-            color: #742a2a;
-        }}
-        
-        .footer {{
-            margin-top: 40px;
-            text-align: center;
-            color: #718096;
-            font-size: 0.9em;
-        }}
-        
-        @media print {{
-            body {{
-                background: white;
-                padding: 0;
-            }}
-            
-            .container {{
-                box-shadow: none;
-            }}
-            
-            .metric-card {{
-                break-inside: avoid;
-            }}
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>📊 Dashboard Scoring Réclamations</h1>
-        <p class="subtitle">Résultats d'automatisation sur {n_total:,} réclamations</p>
-        
-        <!-- MÉTRIQUES GLOBALES -->
-        <div class="metrics-grid">
-            <div class="metric-card">
-                <div class="metric-label">Total Réclamations</div>
-                <div class="metric-value">{n_total:,}</div>
-            </div>
-            
-            <div class="metric-card success">
-                <div class="metric-label">Taux d'Automatisation</div>
-                <div class="metric-value">{taux_auto:.1f}%</div>
-                <div style="font-size: 0.9em; opacity: 0.9;">{n_auto:,} dossiers automatisés</div>
-            </div>
-            
-            <div class="metric-card info">
-                <div class="metric-label">Audit Humain</div>
-                <div class="metric-value">{n_audit:,}</div>
-                <div style="font-size: 0.9em; opacity: 0.9;">{(n_audit/n_total*100):.1f}%</div>
-            </div>
-        </div>
-        
-        <!-- DÉTAIL DES DÉCISIONS -->
-        <div class="section">
-            <h2 class="section-title">📈 Distribution des Décisions</h2>
-            <div class="metrics-grid">
-                <div class="metric-card warning">
-                    <div class="metric-label">❌ Rejet Automatique</div>
-                    <div class="metric-value">{n_rejet:,}</div>
-                    <div class="progress-bar">
-                        <div class="progress-fill" style="width: {(n_rejet/n_total*100):.1f}%">
-                            {(n_rejet/n_total*100):.1f}%
-                        </div>
-                    </div>
-                </div>
+        for r_idx, (_, data_row) in enumerate(results_df.iterrows(), row + 1):
+            for c_idx, (col_name, value) in enumerate(data_row.items(), 1):
+                cell = ws_cat.cell(row=r_idx, column=c_idx, value=value)
+                cell.border = BORDER
                 
-                <div class="metric-card success">
-                    <div class="metric-label">✅ Validation Automatique</div>
-                    <div class="metric-value">{n_validation:,}</div>
-                    <div class="progress-bar">
-                        <div class="progress-fill" style="width: {(n_validation/n_total*100):.1f}%">
-                            {(n_validation/n_total*100):.1f}%
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="metric-card info">
-                    <div class="metric-label">🔍 Audit Humain</div>
-                    <div class="metric-value">{n_audit:,}</div>
-                    <div class="progress-bar">
-                        <div class="progress-fill" style="width: {(n_audit/n_total*100):.1f}%">
-                            {(n_audit/n_total*100):.1f}%
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-"""
+                if col_name in ['Taux Fondées', 'Accuracy', 'Précision', 'Recall', 'F1']:
+                    cell.number_format = '0.00%'
+                    if col_name == 'F1':
+                        if value >= 0.95:
+                            cell.fill = SUCCESS_FILL
+                        elif value >= 0.90:
+                            cell.fill = WARNING_FILL
+                        else:
+                            cell.fill = ERROR_FILL
+        
+        for col in 'ABCDEFG':
+            ws_cat.column_dimensions[col].width = 18
     
-    # Section Erreurs (si disponible)
-    if has_ground_truth:
-        status_precision = '✅' if precision_rejet >= 97 and precision_validation >= 95 else '⚠️'
-        alert_class = 'alert-success' if precision_rejet >= 97 and precision_validation >= 95 else 'alert-warning'
-        
-        # Calcul des impacts
-        total_erreurs = fp + fn
-        impact_financier = fp  # Fausses validations = coût direct
-        impact_satisfaction = fn  # Faux rejets = insatisfaction client
-        
-        html_content += f"""
-        <!-- ERREURS ET PRÉCISION -->
-        <div class="section">
-            <h2 class="section-title">❌ Analyse Détaillée des Erreurs</h2>
-            
-            <div class="alert {alert_class}">
-                <strong>{status_precision} Qualité des Prédictions:</strong><br>
-                Précision Rejet: {precision_rejet:.1f}% (cible: ≥97%)<br>
-                Précision Validation: {precision_validation:.1f}% (cible: ≥95%)<br>
-                Total Erreurs: {total_erreurs:,} ({(total_erreurs/n_total*100):.2f}%)
-            </div>
-            
-            <!-- Erreurs Globales -->
-            <h3 style="color: #2d3748; margin-top: 30px; margin-bottom: 15px;">🔍 Erreurs Globales</h3>
-            <div class="metrics-grid">
-                <div class="metric-card warning">
-                    <div class="metric-label">🔴 Fausses Validations (Faux Positifs)</div>
-                    <div class="metric-value">{fp:,}</div>
-                    <div style="font-size: 0.9em; opacity: 0.9; margin-top: 10px;">
-                        <strong>{taux_fp:.2f}%</strong> des validations automatiques<br>
-                        <hr style="margin: 10px 0; opacity: 0.3;">
-                        <strong>Définition:</strong> Réclamations <u>NON fondées</u> validées automatiquement<br>
-                        <strong>Impact:</strong> 💰 Coût financier direct pour la banque
-                    </div>
-                </div>
-                
-                <div class="metric-card warning">
-                    <div class="metric-label">🔴 Faux Rejets (Faux Négatifs)</div>
-                    <div class="metric-value">{fn:,}</div>
-                    <div style="font-size: 0.9em; opacity: 0.9; margin-top: 10px;">
-                        <strong>{taux_fn:.2f}%</strong> des rejets automatiques<br>
-                        <hr style="margin: 10px 0; opacity: 0.3;">
-                        <strong>Définition:</strong> Réclamations <u>fondées</u> rejetées automatiquement<br>
-                        <strong>Impact:</strong> 😞 Insatisfaction client + risque contentieux
-                    </div>
-                </div>
-                
-                <div class="metric-card success">
-                    <div class="metric-label">✅ Vrais Positifs</div>
-                    <div class="metric-value">{vp:,}</div>
-                    <div style="font-size: 0.9em; opacity: 0.9; margin-top: 10px;">
-                        Fondées <strong>correctement</strong> validées<br>
-                        {(vp/n_validation*100):.1f}% des validations
-                    </div>
-                </div>
-                
-                <div class="metric-card success">
-                    <div class="metric-label">✅ Vrais Négatifs</div>
-                    <div class="metric-value">{vn:,}</div>
-                    <div style="font-size: 0.9em; opacity: 0.9; margin-top: 10px;">
-                        Non-fondées <strong>correctement</strong> rejetées<br>
-                        {(vn/n_rejet*100):.1f}% des rejets
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Comparaison des Impacts -->
-            <h3 style="color: #2d3748; margin-top: 30px; margin-bottom: 15px;">⚖️ Comparaison des Impacts</h3>
-            <div style="background: #f7fafc; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
-                <table style="width: 100%; border: none; box-shadow: none;">
-                    <tr>
-                        <td style="width: 50%; padding: 15px; border-right: 2px solid #e2e8f0;">
-                            <div style="text-align: center;">
-                                <div style="font-size: 2em; color: #e53e3e;">💰</div>
-                                <div style="font-size: 1.5em; font-weight: bold; color: #2d3748; margin: 10px 0;">{fp:,}</div>
-                                <div style="color: #718096;">Fausses Validations</div>
-                                <div style="color: #e53e3e; font-weight: 600; margin-top: 5px;">Impact Financier Direct</div>
-                            </div>
-                        </td>
-                        <td style="width: 50%; padding: 15px;">
-                            <div style="text-align: center;">
-                                <div style="font-size: 2em; color: #ed8936;">😞</div>
-                                <div style="font-size: 1.5em; font-weight: bold; color: #2d3748; margin: 10px 0;">{fn:,}</div>
-                                <div style="color: #718096;">Faux Rejets</div>
-                                <div style="color: #ed8936; font-weight: 600; margin-top: 5px;">Impact Satisfaction Client</div>
-                            </div>
-                        </td>
-                    </tr>
-                </table>
-            </div>
-        </div>
-"""
+    wb.save(output_path)
+    logger.info(f"✓ Performance par catégorie: {output_path}")
+
+
+def generate_excel_errors(df_test, y_true, y_pred, y_proba, output_path):
+    """Génère le fichier des erreurs (FP et FN)."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Border, Side
     
-    # Section Par Famille
-    if not df_familles.empty:
-        html_content += """
-        <!-- RÉSULTATS PAR FAMILLE -->
-        <div class="section">
-            <h2 class="section-title">🏆 Analyse Détaillée par Famille</h2>
-            
-            <!-- Explication -->
-            <div style="background: #edf2f7; padding: 15px; border-radius: 10px; margin-bottom: 20px; border-left: 4px solid #667eea;">
-                <strong>📖 Légende des erreurs:</strong><br>
-                <div style="margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-                    <div>
-                        <strong style="color: #e53e3e;">🔴 Fausses Validations:</strong><br>
-                        Réclamations NON fondées validées automatiquement (impact financier)
-                    </div>
-                    <div>
-                        <strong style="color: #ed8936;">🔴 Faux Rejets:</strong><br>
-                        Réclamations fondées rejetées automatiquement (impact client)
-                    </div>
-                </div>
-            </div>
-            
-            <table>
-                <thead>
-                    <tr>
-                        <th>Rang</th>
-                        <th>Famille</th>
-                        <th>Total</th>
-                        <th>Automatisé</th>
-                        <th>Taux</th>
-                        <th>Rejet</th>
-                        <th>Validation</th>
-                        <th>Audit</th>
-"""
-        
-        if has_ground_truth:
-            html_content += """
-                        <th style="background: #fed7d7; color: #742a2a;">Fausses Validations 💰</th>
-                        <th style="background: #feebc8; color: #7c2d12;">Faux Rejets 😞</th>
-                        <th style="background: #fef5e7; color: #7c2d12;">Total Erreurs</th>
-"""
-        
-        html_content += """
-                    </tr>
-                </thead>
-                <tbody>
-"""
-        
-        for rang, (_, row) in enumerate(df_familles.iterrows(), 1):
-            emoji = "🥇" if rang == 1 else "🥈" if rang == 2 else "🥉" if rang == 3 else ""
-            taux = row['Taux_Auto']
-            badge_class = 'badge-success' if taux >= 50 else 'badge-warning' if taux >= 45 else 'badge-info'
-            
-            # Calcul taux d'erreur pour cette famille
-            total_erreurs_fam = row['Faux_Positifs'] + row['Faux_Négatifs'] if has_ground_truth else 0
-            taux_erreur_fam = (total_erreurs_fam / row['Total'] * 100) if row['Total'] > 0 else 0
-            
-            html_content += f"""
-                    <tr>
-                        <td class="rank">{emoji} {rang}</td>
-                        <td><strong>{row['Famille']}</strong></td>
-                        <td>{row['Total']:,}</td>
-                        <td><strong>{row['Automatisé']:,}</strong></td>
-                        <td><span class="{badge_class}">{taux:.1f}%</span></td>
-                        <td>{row['Rejet']:,}</td>
-                        <td>{row['Validation']:,}</td>
-                        <td>{row['Audit']:,}</td>
-"""
-            
-            if has_ground_truth:
-                # Calcul taux pour cette famille
-                taux_fv_fam = (row['Faux_Positifs'] / row['Validation'] * 100) if row['Validation'] > 0 else 0
-                taux_fr_fam = (row['Faux_Négatifs'] / row['Rejet'] * 100) if row['Rejet'] > 0 else 0
-                
-                # Style conditionnel
-                fv_style = 'color: #c53030; font-weight: bold;' if row['Faux_Positifs'] > 10 else ''
-                fr_style = 'color: #c05621; font-weight: bold;' if row['Faux_Négatifs'] > 10 else ''
-                
-                html_content += f"""
-                        <td style="background: #fff5f5; {fv_style}">
-                            {row['Faux_Positifs']:,}
-                            <br><small style="color: #718096;">({taux_fv_fam:.1f}%)</small>
-                        </td>
-                        <td style="background: #fffaf0; {fr_style}">
-                            {row['Faux_Négatifs']:,}
-                            <br><small style="color: #718096;">({taux_fr_fam:.1f}%)</small>
-                        </td>
-                        <td style="background: #fefcbf; font-weight: bold;">
-                            {total_erreurs_fam:,}
-                            <br><small style="color: #718096;">({taux_erreur_fam:.2f}%)</small>
-                        </td>
-"""
-            
-            html_content += """
-                    </tr>
-"""
-        
-        # Ligne TOTAL
-        total_row = df_familles.sum(numeric_only=True)
-        taux_auto_total = (total_row['Automatisé'] / total_row['Total'] * 100)
-        
-        html_content += f"""
-                    <tr style="background: #edf2f7; font-weight: bold; border-top: 3px solid #667eea;">
-                        <td colspan="2" style="text-align: right; padding-right: 20px;">TOTAL</td>
-                        <td>{total_row['Total']:,.0f}</td>
-                        <td>{total_row['Automatisé']:,.0f}</td>
-                        <td><span class="badge-success">{taux_auto_total:.1f}%</span></td>
-                        <td>{total_row['Rejet']:,.0f}</td>
-                        <td>{total_row['Validation']:,.0f}</td>
-                        <td>{total_row['Audit']:,.0f}</td>
-"""
-        
-        if has_ground_truth:
-            total_fv = total_row['Faux_Positifs']
-            total_fr = total_row['Faux_Négatifs']
-            total_erreurs_global = total_fv + total_fr
-            taux_total_erreurs = (total_erreurs_global / total_row['Total'] * 100)
-            
-            html_content += f"""
-                        <td style="background: #fff5f5; font-weight: bold;">
-                            {total_fv:,.0f}
-                            <br><small>({total_fv/total_row['Validation']*100:.1f}%)</small>
-                        </td>
-                        <td style="background: #fffaf0; font-weight: bold;">
-                            {total_fr:,.0f}
-                            <br><small>({total_fr/total_row['Rejet']*100:.1f}%)</small>
-                        </td>
-                        <td style="background: #fefcbf; font-weight: bold; font-size: 1.1em;">
-                            {total_erreurs_global:,.0f}
-                            <br><small>({taux_total_erreurs:.2f}%)</small>
-                        </td>
-"""
-        
-        html_content += """
-                    </tr>
-                </tbody>
-            </table>
-            
-            <!-- Insights -->
-            <div style="margin-top: 20px;">
-"""
-        
-        if has_ground_truth:
-            # Trouver la famille avec le plus d'erreurs
-            df_familles['Total_Erreurs'] = df_familles['Faux_Positifs'] + df_familles['Faux_Négatifs']
-            pire_famille = df_familles.loc[df_familles['Total_Erreurs'].idxmax()]
-            meilleure_famille = df_familles.loc[df_familles['Total_Erreurs'].idxmin()]
-            
-            html_content += f"""
-                <div class="alert alert-warning">
-                    <strong>⚠️ Attention:</strong> La famille <strong>{pire_famille['Famille']}</strong> 
-                    concentre le plus d'erreurs ({pire_famille['Total_Erreurs']:.0f} erreurs, 
-                    soit {pire_famille['Total_Erreurs']/total_erreurs_global*100:.1f}% du total).
-                    <br><br>
-                    <strong>💡 Recommandation:</strong> Revoir les seuils ou enrichir les features pour cette famille.
-                </div>
-                
-                <div class="alert alert-success">
-                    <strong>✅ Bonne performance:</strong> La famille <strong>{meilleure_famille['Famille']}</strong> 
-                    affiche le moins d'erreurs ({meilleure_famille['Total_Erreurs']:.0f} erreurs).
-                </div>
-"""
-        
-        html_content += """
-            </div>
-        </div>
-"""
+    HEADER_FILL = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+    HEADER_FONT = Font(color="FFFFFF", bold=True)
+    ERROR_FILL = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    WARNING_FILL = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+    BORDER = Border(
+        left=Side(style='thin'), right=Side(style='thin'),
+        top=Side(style='thin'), bottom=Side(style='thin')
+    )
     
-    # Footer
-    from datetime import datetime
-    now = datetime.now().strftime("%d/%m/%Y %H:%M")
+    # Préparer les données
+    df_analysis = df_test.copy()
+    df_analysis['_Prediction'] = y_pred
+    df_analysis['_Probabilite'] = y_proba
+    df_analysis['_Reel'] = y_true
     
-    html_content += f"""
-        <div class="footer">
-            <p>📅 Généré le {now}</p>
-            <p>🔧 Moteur de Scoring v2.0 - Production Ready</p>
-        </div>
-    </div>
-</body>
-</html>
-"""
+    # Faux Positifs et Faux Négatifs
+    mask_fp = (y_pred == 1) & (y_true == 0)
+    mask_fn = (y_pred == 0) & (y_true == 1)
     
-    # 5. Sauvegarder le fichier
-    logger.info(f"\n💾 Sauvegarde du dashboard...")
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    df_fp = df_analysis[mask_fp].copy()
+    df_fn = df_analysis[mask_fn].copy()
     
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(html_content)
+    wb = Workbook()
     
-    logger.info(f"✅ Dashboard sauvegardé: {output_path}")
+    # Résumé
+    ws = wb.active
+    ws.title = "Résumé"
+    ws['A1'] = "ANALYSE DES ERREURS"
+    ws['A1'].font = Font(bold=True, size=16)
     
-    # 6. Résumé
-    logger.info("\n" + "=" * 80)
-    logger.info("✅ DASHBOARD GÉNÉRÉ AVEC SUCCÈS")
-    logger.info("=" * 80)
-    logger.info(f"\n📊 Métriques incluses:")
-    logger.info(f"   - {n_total:,} réclamations analysées")
-    logger.info(f"   - {taux_auto:.1f}% d'automatisation")
-    logger.info(f"   - {len(df_familles)} familles de produits")
-    if has_ground_truth:
-        logger.info(f"   - {fp + fn:,} erreurs détectées")
+    total = len(df_fp) + len(df_fn)
     
-    logger.info(f"\n💡 Pour voir le dashboard:")
-    logger.info(f"   1. Ouvrir: {output_path}")
-    logger.info(f"   2. Double-cliquer sur le fichier HTML")
-    logger.info(f"   3. Il s'ouvrira dans votre navigateur")
+    ws['A3'] = "Type Erreur"
+    ws['B3'] = "Nombre"
+    ws['C3'] = "Impact"
+    for col in 'ABC':
+        ws[f'{col}3'].fill = HEADER_FILL
+        ws[f'{col}3'].font = HEADER_FONT
+    
+    ws['A4'] = "Faux Positifs (Fausses Validations)"
+    ws['B4'] = len(df_fp)
+    ws['C4'] = "COÛT FINANCIER"
+    ws['A4'].fill = ERROR_FILL
+    
+    ws['A5'] = "Faux Négatifs (Faux Rejets)"
+    ws['B5'] = len(df_fn)
+    ws['C5'] = "INSATISFACTION CLIENT"
+    ws['A5'].fill = WARNING_FILL
+    
+    ws['A6'] = "TOTAL"
+    ws['B6'] = total
+    ws['A6'].font = Font(bold=True)
+    
+    ws.column_dimensions['A'].width = 40
+    ws.column_dimensions['B'].width = 12
+    ws.column_dimensions['C'].width = 25
+    
+    # Faux Positifs
+    ws_fp = wb.create_sheet("Faux Positifs")
+    ws_fp['A1'] = f"FAUX POSITIFS - {len(df_fp)} cas"
+    ws_fp['A1'].font = Font(bold=True, size=14, color="C00000")
+    
+    if len(df_fp) > 0:
+        cols = [c for c in df_fp.columns if not c.startswith('_')] + ['_Probabilite']
+        
+        row = 3
+        for col_idx, col in enumerate(cols, 1):
+            cell = ws_fp.cell(row=row, column=col_idx, value=col)
+            cell.fill = HEADER_FILL
+            cell.font = HEADER_FONT
+        
+        for r_idx, (_, data_row) in enumerate(df_fp[cols].head(500).iterrows(), row + 1):
+            for c_idx, value in enumerate(data_row, 1):
+                cell = ws_fp.cell(row=r_idx, column=c_idx)
+                if pd.isna(value):
+                    cell.value = ""
+                elif isinstance(value, (np.floating, float)):
+                    cell.value = round(float(value), 4)
+                elif isinstance(value, (np.integer, int)):
+                    cell.value = int(value)
+                else:
+                    cell.value = str(value)[:100]
+    
+    # Faux Négatifs
+    ws_fn = wb.create_sheet("Faux Négatifs")
+    ws_fn['A1'] = f"FAUX NÉGATIFS - {len(df_fn)} cas"
+    ws_fn['A1'].font = Font(bold=True, size=14, color="FF6600")
+    
+    if len(df_fn) > 0:
+        cols = [c for c in df_fn.columns if not c.startswith('_')] + ['_Probabilite']
+        
+        row = 3
+        for col_idx, col in enumerate(cols, 1):
+            cell = ws_fn.cell(row=row, column=col_idx, value=col)
+            cell.fill = HEADER_FILL
+            cell.font = HEADER_FONT
+        
+        for r_idx, (_, data_row) in enumerate(df_fn[cols].head(500).iterrows(), row + 1):
+            for c_idx, value in enumerate(data_row, 1):
+                cell = ws_fn.cell(row=r_idx, column=c_idx)
+                if pd.isna(value):
+                    cell.value = ""
+                elif isinstance(value, (np.floating, float)):
+                    cell.value = round(float(value), 4)
+                elif isinstance(value, (np.integer, int)):
+                    cell.value = int(value)
+                else:
+                    cell.value = str(value)[:100]
+    
+    wb.save(output_path)
+    logger.info(f"✓ Analyse erreurs: {output_path}")
+    logger.info(f"  - Faux Positifs: {len(df_fp)}")
+    logger.info(f"  - Faux Négatifs: {len(df_fn)}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Pipeline simplifié - Classification Réclamations')
+    parser.add_argument('--data', '-d', required=True, help='Fichier de données Excel')
+    parser.add_argument('--output', '-o', default='outputs', help='Répertoire de sortie')
+    args = parser.parse_args()
+    
+    output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    logger.info("=" * 60)
+    logger.info("PIPELINE CLASSIFICATION RÉCLAMATIONS BANCAIRES")
+    logger.info("=" * 60)
+    
+    # 1. Charger les données
+    logger.info(f"\n📂 Chargement: {args.data}")
+    df = pd.read_excel(args.data)
+    logger.info(f"   {df.shape[0]} lignes, {df.shape[1]} colonnes")
+    
+    # 2. Analyser
+    analyze_dataframe(df)
+    
+    # 3. Détecter colonnes
+    target_col = detect_target(df)
+    cat_cols = detect_category_columns(df, target_col)
+    
+    # 4. Préparer données
+    logger.info("\n🔧 Préparation des données...")
+    y = prepare_target(df, target_col)
+    X = prepare_features(df, target_col)
+    
+    # 5. Split
+    X_train, X_test, y_train, y_test, idx_train, idx_test = train_test_split(
+        X, y, df.index, test_size=0.2, stratify=y, random_state=42
+    )
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_train, y_train, test_size=0.15, stratify=y_train, random_state=42
+    )
+    
+    logger.info(f"   Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
+    
+    # 6. Entraîner
+    logger.info("\n🚀 Entraînement du modèle...")
+    model, model_name = train_lightgbm(X_train, y_train, X_val, y_val)
+    
+    # 7. Prédire
+    y_pred = model.predict(X_test)
+    y_proba = model.predict_proba(X_test)[:, 1]
+    
+    # 8. Métriques
+    logger.info("\n📊 Calcul des métriques...")
+    metrics = calculate_all_metrics(y_test.values, y_pred, y_proba)
+    thresholds = optimize_thresholds(y_test.values, y_proba)
+    
+    logger.info(f"   F1-Score: {metrics['f1_weighted']:.4f}")
+    logger.info(f"   AUC-ROC: {metrics['roc_auc']:.4f}")
+    logger.info(f"   Taux Auto: {thresholds['automation_rate']:.1%}")
+    
+    # 9. Générer livrables
+    logger.info("\n📝 Génération des livrables...")
+    
+    df_test = df.iloc[idx_test].reset_index(drop=True)
+    y_test_reset = y_test.reset_index(drop=True)
+    
+    generate_excel_summary(
+        metrics, thresholds, model_name,
+        output_dir / "1_performance_summary.xlsx"
+    )
+    
+    generate_excel_by_category(
+        df_test, y_test_reset.values, y_pred, y_proba, cat_cols,
+        output_dir / "2_performance_by_category.xlsx"
+    )
+    
+    generate_excel_errors(
+        df_test, y_test_reset.values, y_pred, y_proba,
+        output_dir / "3_errors_analysis.xlsx"
+    )
+    
+    logger.info("\n" + "=" * 60)
+    logger.info("✅ PIPELINE TERMINÉ AVEC SUCCÈS")
+    logger.info("=" * 60)
+    logger.info(f"\n📁 Livrables dans: {output_dir}")
+    logger.info("   1. 1_performance_summary.xlsx")
+    logger.info("   2. 2_performance_by_category.xlsx")
+    logger.info("   3. 3_errors_analysis.xlsx")
 
 
 if __name__ == "__main__":
-    try:
-        generate_dashboard()
-    except Exception as e:
-        logger.error(f"❌ Erreur: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-i"
+    main()
