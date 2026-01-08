@@ -1,0 +1,505 @@
+\documentclass[aspectratio=169,11pt]{beamer}
+
+% =============================================================================
+% PACKAGES
+% =============================================================================
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{colortbl}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\usepackage{fontawesome5}
+\usepackage{tcolorbox}
+\usepackage{multicol}
+\usepackage{array}
+\usepackage{adjustbox}
+
+% =============================================================================
+% THEME ET COULEURS
+% =============================================================================
+\usetheme{Madrid}
+\usecolortheme{default}
+
+% Couleurs personnalisées
+\definecolor{bleubank}{RGB}{31,78,121}
+\definecolor{bleuclair}{RGB}{91,155,213}
+\definecolor{vertok}{RGB}{112,173,71}
+\definecolor{orange}{RGB}{237,125,49}
+\definecolor{rouge}{RGB}{192,0,0}
+\definecolor{gris}{RGB}{128,128,128}
+\definecolor{grisclair}{RGB}{242,242,242}
+
+% Appliquer les couleurs au thème
+\setbeamercolor{palette primary}{bg=bleubank,fg=white}
+\setbeamercolor{palette secondary}{bg=bleuclair,fg=white}
+\setbeamercolor{palette tertiary}{bg=bleubank,fg=white}
+\setbeamercolor{structure}{fg=bleubank}
+\setbeamercolor{title}{fg=white,bg=bleubank}
+\setbeamercolor{frametitle}{fg=white,bg=bleubank}
+\setbeamercolor{block title}{bg=bleubank,fg=white}
+\setbeamercolor{block body}{bg=grisclair,fg=black}
+
+% Pas de navigation
+\setbeamertemplate{navigation symbols}{}
+
+% Numéros de page
+\setbeamertemplate{footline}[frame number]
+
+% Style des items
+\setbeamertemplate{itemize items}[circle]
+\setbeamercolor{itemize item}{fg=bleubank}
+\setbeamercolor{itemize subitem}{fg=bleuclair}
+
+% =============================================================================
+% COMMANDES PERSONNALISÉES
+% =============================================================================
+\newtcolorbox{kpibox}[2][]{
+    colback=grisclair,
+    colframe=bleubank,
+    fonttitle=\bfseries,
+    title=#2,
+    #1
+}
+
+\newtcolorbox{successbox}[1][]{
+    colback=vertok!10,
+    colframe=vertok,
+    #1
+}
+
+\newtcolorbox{warningbox}[1][]{
+    colback=orange!10,
+    colframe=orange,
+    #1
+}
+
+% =============================================================================
+% INFORMATIONS DU DOCUMENT
+% =============================================================================
+\title[Classification Réclamations]{\textbf{Classification Automatique des Réclamations Bancaires}}
+\subtitle{Rapport de Performance et Analyse d'Impact}
+\author{Direction des Réclamations}
+\institute{Projet Machine Learning}
+\date{\today}
+
+% =============================================================================
+% DÉBUT DU DOCUMENT
+% =============================================================================
+\begin{document}
+
+% -----------------------------------------------------------------------------
+% PAGE DE TITRE
+% -----------------------------------------------------------------------------
+\begin{frame}
+    \titlepage
+\end{frame}
+
+% -----------------------------------------------------------------------------
+% SOMMAIRE
+% -----------------------------------------------------------------------------
+\begin{frame}{Sommaire}
+    \tableofcontents
+\end{frame}
+
+% =============================================================================
+% SECTION 1: CONTEXTE ET OBJECTIFS
+% =============================================================================
+\section{Contexte et Objectifs}
+
+\begin{frame}{Contexte du Projet}
+    \begin{columns}[T]
+        \begin{column}{0.5\textwidth}
+            \textbf{\faExclamationTriangle\ Problématique actuelle}
+            \begin{itemize}
+                \item Traitement manuel des réclamations
+                \item Temps de traitement long
+                \item Coût élevé par réclamation
+                \item Risque d'incohérence des décisions
+            \end{itemize}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \textbf{\faLightbulb\ Solution proposée}
+            \begin{itemize}
+                \item Modèle de Machine Learning
+                \item Classification automatique
+                \item Système à 3 zones de décision
+                \item Gain de 169 MAD par réclamation automatisée
+            \end{itemize}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+\begin{frame}{Objectifs de Performance}
+    \begin{center}
+        \begin{tabular}{lcc}
+            \toprule
+            \textbf{Métrique} & \textbf{Objectif} & \textbf{Importance} \\
+            \midrule
+            \rowcolor{grisclair} Précision Rejets & $\geq 97\%$ & Éviter clients lésés \\
+            Précision Validations & $\geq 95\%$ & Limiter pertes financières \\
+            \rowcolor{grisclair} Taux d'Automatisation & 45-55\% & ROI optimal \\
+            Temps d'inférence & $< 100$ms & Production temps réel \\
+            \bottomrule
+        \end{tabular}
+    \end{center}
+    
+    \vspace{0.5cm}
+    
+    \begin{successbox}
+        \centering
+        \textbf{Approche à 3 zones:} Rejet auto ($<30\%$) | Audit humain (30-70\%) | Validation auto ($>70\%$)
+    \end{successbox}
+\end{frame}
+
+% =============================================================================
+% SECTION 2: RÉSULTATS DU MODÈLE
+% =============================================================================
+\section{Résultats du Modèle}
+
+\begin{frame}{Matrice de Confusion - Ensemble de Test}
+    \begin{center}
+        % REMPLACER PAR VOTRE IMAGE
+        \includegraphics[width=0.85\textwidth]{images/1_matrice_confusion_test.png}
+    \end{center}
+\end{frame}
+
+\begin{frame}{Performance par Famille Produit}
+    \begin{center}
+        % REMPLACER PAR VOTRE IMAGE
+        \includegraphics[width=0.95\textwidth]{images/2_performance_famille_test.png}
+    \end{center}
+\end{frame}
+
+% =============================================================================
+% SECTION 3: ANALYSE D'IMPACT
+% =============================================================================
+\section{Analyse d'Impact}
+
+\begin{frame}{Impact Total - Base Complète}
+    \begin{center}
+        % REMPLACER PAR VOTRE IMAGE
+        \includegraphics[width=0.9\textwidth]{images/3_impact_total_base_complete.png}
+    \end{center}
+\end{frame}
+
+\begin{frame}{Impact - Familles avec Accuracy $\geq 95\%$}
+    \begin{center}
+        % REMPLACER PAR VOTRE IMAGE
+        \includegraphics[width=0.95\textwidth]{images/4_impact_95_base_complete.png}
+    \end{center}
+    
+    \vspace{0.3cm}
+    
+    \begin{successbox}
+        \centering
+        \faCheckCircle\ \textbf{Recommandation:} Automatiser en priorité ces familles performantes
+    \end{successbox}
+\end{frame}
+
+\begin{frame}{Impact - Familles avec Accuracy $\geq 90\%$}
+    \begin{center}
+        % REMPLACER PAR VOTRE IMAGE
+        \includegraphics[width=0.95\textwidth]{images/5_impact_90_base_complete.png}
+    \end{center}
+\end{frame}
+
+\begin{frame}{Familles à Risque - Analyse des Pertes}
+    \begin{center}
+        % REMPLACER PAR VOTRE IMAGE
+        \includegraphics[width=0.95\textwidth]{images/6_familles_pertes_base_complete.png}
+    \end{center}
+    
+    \vspace{0.3cm}
+    
+    \begin{warningbox}
+        \centering
+        \faExclamationTriangle\ \textbf{Attention:} Ces familles nécessitent un traitement manuel ou des améliorations
+    \end{warningbox}
+\end{frame}
+
+% =============================================================================
+% SECTION 4: APPROCHE TECHNIQUE
+% =============================================================================
+\section{Approche Technique}
+
+\begin{frame}{Pourquoi Machine Learning vs Scoring Simple?}
+    \begin{columns}[T]
+        \begin{column}{0.48\textwidth}
+            \textbf{\faTimesCircle\ Scoring Simple}
+            \begin{itemize}
+                \item Poids arbitraires
+                \item Pas d'interactions
+                \item Décision binaire forcée
+                \item Seuils fixes et rigides
+                \item Recalibrage manuel
+            \end{itemize}
+            
+            \vspace{0.3cm}
+            \centering
+            \textcolor{rouge}{\textbf{Accuracy $\sim$75-80\%}}
+        \end{column}
+        
+        \begin{column}{0.48\textwidth}
+            \textbf{\faCheckCircle\ Notre Approche ML}
+            \begin{itemize}
+                \item Poids appris sur données
+                \item Capture les interactions
+                \item Zone d'incertitude $\rightarrow$ humain
+                \item Seuils optimisés
+                \item Réentraînement automatique
+            \end{itemize}
+            
+            \vspace{0.3cm}
+            \centering
+            \textcolor{vertok}{\textbf{Accuracy $\sim$94\%}}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+\begin{frame}{Architecture du Système de Décision}
+    \begin{center}
+        \begin{tikzpicture}[scale=0.9]
+            % Axe
+            \draw[thick, ->] (0,0) -- (12,0) node[right] {Probabilité};
+            \draw[thick] (0,-0.2) -- (0,0.2);
+            \draw[thick] (12,-0.2) -- (12,0.2);
+            
+            % Zones
+            \fill[rouge!30] (0,0.5) rectangle (3.6,2);
+            \fill[orange!30] (3.6,0.5) rectangle (8.4,2);
+            \fill[vertok!30] (8.4,0.5) rectangle (12,2);
+            
+            % Labels zones
+            \node at (1.8,1.25) {\textbf{REJET AUTO}};
+            \node at (6,1.25) {\textbf{AUDIT HUMAIN}};
+            \node at (10.2,1.25) {\textbf{VALIDATION AUTO}};
+            
+            % Seuils
+            \draw[thick, dashed, rouge] (3.6,-0.5) -- (3.6,2.5);
+            \draw[thick, dashed, vertok] (8.4,-0.5) -- (8.4,2.5);
+            
+            % Labels seuils
+            \node at (3.6,-0.8) {\textbf{30\%}};
+            \node at (8.4,-0.8) {\textbf{70\%}};
+            \node at (0,-0.8) {0\%};
+            \node at (12,-0.8) {100\%};
+            
+            % Annotations
+            \node[below, rouge] at (1.8,0.3) {\small Haute confiance};
+            \node[below, orange] at (6,0.3) {\small Incertain};
+            \node[below, vertok] at (10.2,0.3) {\small Haute confiance};
+        \end{tikzpicture}
+    \end{center}
+    
+    \vspace{0.5cm}
+    
+    \begin{center}
+        \textit{"Un bon modèle sait ce qu'il ne sait pas"}
+    \end{center}
+\end{frame}
+
+\begin{frame}{Hyperparamètres Optimisés (Optuna)}
+    \begin{center}
+        \begin{tabular}{lc}
+            \toprule
+            \textbf{Paramètre} & \textbf{Valeur Optimale} \\
+            \midrule
+            \rowcolor{grisclair} max\_depth & 6 \\
+            learning\_rate & 0.05 \\
+            \rowcolor{grisclair} n\_estimators & 300 \\
+            min\_child\_weight & 5 \\
+            \rowcolor{grisclair} subsample & 0.80 \\
+            colsample\_bytree & 0.80 \\
+            \bottomrule
+        \end{tabular}
+    \end{center}
+    
+    \vspace{0.5cm}
+    
+    \begin{block}{Méthode d'optimisation}
+        \begin{itemize}
+            \item Algorithme: TPE (Tree-structured Parzen Estimator)
+            \item Objectif: Maximiser le F1-Score
+            \item Nombre de trials: 50+
+        \end{itemize}
+    \end{block}
+\end{frame}
+
+% =============================================================================
+% SECTION 5: RECOMMANDATIONS
+% =============================================================================
+\section{Recommandations}
+
+\begin{frame}{Plan de Déploiement Recommandé}
+    \begin{columns}[T]
+        \begin{column}{0.32\textwidth}
+            \begin{kpibox}{Phase 1: Pilote}
+                \begin{itemize}
+                    \item Familles $\geq 95\%$ accuracy
+                    \item Double vérification
+                    \item Durée: 1-2 mois
+                \end{itemize}
+            \end{kpibox}
+        \end{column}
+        
+        \begin{column}{0.32\textwidth}
+            \begin{kpibox}{Phase 2: Extension}
+                \begin{itemize}
+                    \item Familles $\geq 90\%$ accuracy
+                    \item Monitoring renforcé
+                    \item Durée: 2-3 mois
+                \end{itemize}
+            \end{kpibox}
+        \end{column}
+        
+        \begin{column}{0.32\textwidth}
+            \begin{kpibox}{Phase 3: Production}
+                \begin{itemize}
+                    \item Toutes familles éligibles
+                    \item Automatisation complète
+                    \item Revue mensuelle
+                \end{itemize}
+            \end{kpibox}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+\begin{frame}{Familles à Prioriser vs À Exclure}
+    \begin{columns}[T]
+        \begin{column}{0.48\textwidth}
+            \begin{successbox}
+                \textbf{\faCheckCircle\ À automatiser en priorité}
+                \begin{itemize}
+                    \item Accuracy $\geq 95\%$
+                    \item Volume significatif
+                    \item Faibles pertes montant
+                    \item Gain net positif
+                \end{itemize}
+            \end{successbox}
+        \end{column}
+        
+        \begin{column}{0.48\textwidth}
+            \begin{warningbox}
+                \textbf{\faExclamationTriangle\ À garder en manuel}
+                \begin{itemize}
+                    \item Accuracy $< 90\%$
+                    \item Pertes montant élevées
+                    \item Cas complexes (litiges)
+                    \item Familles sensibles
+                \end{itemize}
+            \end{warningbox}
+        \end{column}
+    \end{columns}
+    
+    \vspace{0.5cm}
+    
+    \begin{block}{Principe clé}
+        \centering
+        \textbf{Automatiser uniquement quand on est sûr, laisser l'humain décider sinon}
+    \end{block}
+\end{frame}
+
+\begin{frame}{Métriques de Suivi en Production}
+    \begin{center}
+        \begin{tabular}{llc}
+            \toprule
+            \textbf{Métrique} & \textbf{Fréquence} & \textbf{Seuil d'alerte} \\
+            \midrule
+            \rowcolor{grisclair} Accuracy globale & Quotidienne & $< 90\%$ \\
+            Taux d'automatisation & Quotidienne & $< 40\%$ ou $> 60\%$ \\
+            \rowcolor{grisclair} Précision rejets & Hebdomadaire & $< 95\%$ \\
+            Montant erreurs FP & Hebdomadaire & $> X$ MAD \\
+            \rowcolor{grisclair} Drift des features & Mensuelle & Alerte automatique \\
+            \bottomrule
+        \end{tabular}
+    \end{center}
+    
+    \vspace{0.5cm}
+    
+    \begin{itemize}
+        \item \faSync\ Réentraînement trimestriel recommandé
+        \item \faChartLine\ Dashboard de monitoring en temps réel
+        \item \faUsers\ Échantillonnage aléatoire pour audit qualité
+    \end{itemize}
+\end{frame}
+
+% =============================================================================
+% CONCLUSION
+% =============================================================================
+\section{Conclusion}
+
+\begin{frame}{Synthèse}
+    \begin{columns}[T]
+        \begin{column}{0.5\textwidth}
+            \textbf{\faCheckCircle\ Points forts}
+            \begin{itemize}
+                \item Accuracy élevée ($\sim$94\%)
+                \item Système de confiance à 3 zones
+                \item Gains financiers significatifs
+                \item Traçabilité des décisions
+                \item Modèle explicable
+            \end{itemize}
+        \end{column}
+        
+        \begin{column}{0.5\textwidth}
+            \textbf{\faExclamationTriangle\ Points d'attention}
+            \begin{itemize}
+                \item Certaines familles à risque
+                \item Monitoring nécessaire
+                \item Formation des équipes
+                \item Gestion du changement
+            \end{itemize}
+        \end{column}
+    \end{columns}
+    
+    \vspace{0.5cm}
+    
+    \begin{successbox}
+        \centering
+        \Large\textbf{Le modèle est prêt pour un déploiement en pilote}
+    \end{successbox}
+\end{frame}
+
+\begin{frame}{}
+    \begin{center}
+        \vspace{2cm}
+        {\Huge\textbf{Merci de votre attention}}
+        
+        \vspace{1cm}
+        
+        {\Large Questions ?}
+        
+        \vspace{2cm}
+        
+        \textcolor{gris}{\faEnvelope\ contact@banque.ma}
+    \end{center}
+\end{frame}
+
+% =============================================================================
+% ANNEXES
+% =============================================================================
+\appendix
+
+\begin{frame}{Annexe: Glossaire}
+    \small
+    \begin{tabular}{ll}
+        \toprule
+        \textbf{Terme} & \textbf{Définition} \\
+        \midrule
+        Accuracy & \% de prédictions correctes \\
+        Précision & \% de positifs prédits qui sont vrais \\
+        Recall & \% de vrais positifs correctement identifiés \\
+        F1-Score & Moyenne harmonique précision/recall \\
+        Faux Positif (FP) & Prédit fondée, réellement non fondée \\
+        Faux Négatif (FN) & Prédit non fondée, réellement fondée \\
+        XGBoost & Algorithme de gradient boosting \\
+        Optuna & Framework d'optimisation hyperparamètres \\
+        \bottomrule
+    \end{tabular}
+\end{frame}
+
+\end{document}
