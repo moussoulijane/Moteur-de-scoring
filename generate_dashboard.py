@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-Inférence Complète + Graphiques d'Impact
-=========================================
-- Inférence sur toute la base
-- Matrice de confusion
-- Impact FP/FN (nombre + montant)
-- Gain total automatisation (169 MAD/réclamation)
+Inférence + Impact - UNIQUEMENT 4 Familles Performantes
+=========================================================
+Filtre sur:
+- Clôture de compte
+- Ristourne / intérêt clientèle
+- Opérations sur GAB
+- Cartes Wafacash
 
 Usage:
-    python inference_impact.py --data fichier.xlsx --output resultats/
+    python inference_4_familles.py --data fichier.xlsx --output resultats/
 """
 
 import pandas as pd
 import numpy as np
 import argparse
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
@@ -28,37 +28,64 @@ COUT_TRAITEMENT_MANUEL = 169  # MAD par réclamation
 SEUIL_REJET = 0.30
 SEUIL_VALIDATION = 0.70
 
-# Style des graphiques
+# Les 4 familles performantes (en vert)
+FAMILLES_CIBLES = [
+    'Clôture de compte',
+    'Ristourne / intérêt clientèle',
+    'Opérations. sur GAB',
+    'Opérations sur GAB',  # Variante possible
+    'Cartes Wafacash',
+]
+
+# Style
 plt.style.use('seaborn-v0_8-whitegrid')
 COLORS = {
-    'fp': '#e74c3c',      # Rouge - Faux Positifs
-    'fn': '#f39c12',      # Orange - Faux Négatifs
-    'tp': '#27ae60',      # Vert - Vrais Positifs
-    'tn': '#3498db',      # Bleu - Vrais Négatifs
-    'gain': '#2ecc71',    # Vert clair - Gains
-    'perte': '#c0392b',   # Rouge foncé - Pertes
-    'auto': '#9b59b6',    # Violet - Automatisé
+    'fp': '#e74c3c',
+    'fn': '#f39c12', 
+    'tp': '#27ae60',
+    'tn': '#3498db',
+    'gain': '#2ecc71',
+    'perte': '#c0392b',
+    'auto': '#9b59b6',
 }
 
 
 def detect_columns(df):
-    """Détecte les colonnes cible et montant."""
-    # Cible
+    """Détecte colonnes cible, montant et famille."""
     target_col = None
     for col in df.columns:
         if 'fond' in col.lower():
             target_col = col
             break
     
-    # Montant
     montant_col = None
     for col in df.columns:
-        col_lower = col.lower()
-        if 'montant' in col_lower:
+        if 'montant' in col.lower():
             montant_col = col
             break
     
-    return target_col, montant_col
+    famille_col = None
+    for col in df.columns:
+        col_lower = col.lower()
+        if 'famille' in col_lower or 'family' in col_lower:
+            famille_col = col
+            break
+        if 'produit' in col_lower and df[col].dtype == 'object':
+            famille_col = col
+    
+    return target_col, montant_col, famille_col
+
+
+def filter_familles(df, famille_col):
+    """Filtre sur les 4 familles cibles."""
+    mask = df[famille_col].isin(FAMILLES_CIBLES)
+    
+    # Si pas de match exact, essayer avec contains
+    if mask.sum() == 0:
+        for famille in FAMILLES_CIBLES:
+            mask = mask | df[famille_col].str.contains(famille.split()[0], case=False, na=False)
+    
+    return df[mask].copy()
 
 
 def prepare_data(df, target_col):
@@ -89,14 +116,12 @@ def prepare_data(df, target_col):
 
 
 def train_model(X, y):
-    """Entraîne le modèle sur un split puis prédit sur toute la base."""
+    """Entraîne XGBoost."""
     import xgboost as xgb
     
-    # Split pour entraînement
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
     X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.15, stratify=y_train, random_state=42)
     
-    # Entraînement
     model = xgb.XGBClassifier(
         max_depth=6, learning_rate=0.05, n_estimators=300,
         random_state=42, verbosity=0
@@ -106,323 +131,253 @@ def train_model(X, y):
     return model
 
 
-def plot_confusion_matrix(y_true, y_pred, output_path):
-    """Graphique matrice de confusion."""
+def plot_confusion_matrix(y_true, y_pred, title, output_path):
+    """Matrice de confusion."""
     cm = confusion_matrix(y_true, y_pred)
     tn, fp, fn, tp = cm.ravel()
     
     fig, ax = plt.subplots(figsize=(10, 8))
     
-    # Matrice
     matrix = np.array([[tn, fp], [fn, tp]])
-    
-    # Couleurs
-    colors = np.array([[COLORS['tn'], COLORS['fp']], 
-                       [COLORS['fn'], COLORS['tp']]])
+    colors = np.array([[COLORS['tn'], COLORS['fp']], [COLORS['fn'], COLORS['tp']]])
     
     for i in range(2):
         for j in range(2):
-            color = colors[i, j]
-            ax.add_patch(plt.Rectangle((j, 1-i), 1, 1, fill=True, color=color, alpha=0.7))
-            
-            # Valeur
+            ax.add_patch(plt.Rectangle((j, 1-i), 1, 1, fill=True, color=colors[i,j], alpha=0.7))
             value = matrix[i, j]
             pct = value / matrix.sum() * 100
-            
-            # Labels
-            labels = [['Vrai Négatif\n(Bon Rejet)', 'Faux Positif\n(Fausse Validation)'],
-                      ['Faux Négatif\n(Faux Rejet)', 'Vrai Positif\n(Bonne Validation)']]
+            labels = [['Vrai Négatif', 'Faux Positif'], ['Faux Négatif', 'Vrai Positif']]
             
             ax.text(j + 0.5, 1.5 - i, f'{value:,}', ha='center', va='center',
-                    fontsize=28, fontweight='bold', color='white')
+                    fontsize=32, fontweight='bold', color='white')
             ax.text(j + 0.5, 1.2 - i, f'({pct:.1f}%)', ha='center', va='center',
-                    fontsize=14, color='white')
-            ax.text(j + 0.5, 0.85 - i + 1, labels[i][j], ha='center', va='center',
-                    fontsize=10, color='white', style='italic')
+                    fontsize=16, color='white')
+            ax.text(j + 0.5, 0.9 - i + 1, labels[i][j], ha='center', va='center',
+                    fontsize=11, color='white', style='italic')
     
-    # Axes
     ax.set_xlim(0, 2)
     ax.set_ylim(0, 2)
     ax.set_xticks([0.5, 1.5])
     ax.set_yticks([0.5, 1.5])
     ax.set_xticklabels(['Prédit: Non Fondée', 'Prédit: Fondée'], fontsize=12)
     ax.set_yticklabels(['Réel: Fondée', 'Réel: Non Fondée'], fontsize=12)
-    ax.set_xlabel('Prédiction', fontsize=14, fontweight='bold')
-    ax.set_ylabel('Réalité', fontsize=14, fontweight='bold')
     
-    # Titre
     total = matrix.sum()
     accuracy = (tn + tp) / total * 100
-    ax.set_title(f'Matrice de Confusion\nTotal: {total:,} réclamations | Accuracy: {accuracy:.1f}%',
+    ax.set_title(f'{title}\nTotal: {total:,} | Accuracy: {accuracy:.1f}%',
                  fontsize=16, fontweight='bold', pad=20)
     
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor='white')
     plt.close()
-    print(f"✅ Matrice de confusion: {output_path}")
+    print(f"✅ {output_path}")
     
     return tn, fp, fn, tp
 
 
-def plot_impact_fp_fn(fp_count, fn_count, fp_montant, fn_montant, output_path):
-    """Graphique impact FP et FN (nombre + montant)."""
+def plot_impact_errors(fp_count, fn_count, fp_montant, fn_montant, output_path):
+    """Impact FP/FN en nombre et montant."""
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     
-    # === Graphique 1: Nombre ===
+    # Nombre
     ax1 = axes[0]
-    categories = ['Faux Positifs\n(Fausses Validations)', 'Faux Négatifs\n(Faux Rejets)']
-    values = [fp_count, fn_count]
+    cats = ['Faux Positifs\n(Fausses Validations)', 'Faux Négatifs\n(Faux Rejets)']
+    vals = [fp_count, fn_count]
     colors = [COLORS['fp'], COLORS['fn']]
     
-    bars1 = ax1.bar(categories, values, color=colors, edgecolor='white', linewidth=2)
+    bars = ax1.bar(cats, vals, color=colors, edgecolor='white', linewidth=2)
+    for bar, val in zip(bars, vals):
+        ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(vals)*0.02,
+                 f'{val:,}', ha='center', va='bottom', fontsize=18, fontweight='bold')
     
-    # Annotations
-    for bar, val in zip(bars1, values):
-        ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(values)*0.02,
-                 f'{val:,}', ha='center', va='bottom', fontsize=16, fontweight='bold')
+    ax1.set_ylabel('Nombre', fontsize=12, fontweight='bold')
+    ax1.set_title('IMPACT EN NOMBRE', fontsize=14, fontweight='bold')
+    ax1.set_ylim(0, max(vals) * 1.2 if max(vals) > 0 else 1)
     
-    ax1.set_ylabel('Nombre de réclamations', fontsize=12, fontweight='bold')
-    ax1.set_title('Impact en NOMBRE', fontsize=14, fontweight='bold')
-    ax1.set_ylim(0, max(values) * 1.15)
+    total = fp_count + fn_count
+    ax1.text(0.5, 0.92, f'Total erreurs: {total:,}', transform=ax1.transAxes,
+             ha='center', fontsize=13, fontweight='bold',
+             bbox=dict(boxstyle='round', facecolor='#ffeb3b', alpha=0.8))
     
-    # Total
-    total_erreurs = fp_count + fn_count
-    ax1.text(0.5, 0.95, f'Total erreurs: {total_erreurs:,}', transform=ax1.transAxes,
-             ha='center', fontsize=12, bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-    
-    # === Graphique 2: Montant ===
+    # Montant
     ax2 = axes[1]
     montants = [fp_montant, fn_montant]
     
-    bars2 = ax2.bar(categories, montants, color=colors, edgecolor='white', linewidth=2)
-    
-    # Annotations
+    bars2 = ax2.bar(cats, montants, color=colors, edgecolor='white', linewidth=2)
     for bar, val in zip(bars2, montants):
         ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(montants)*0.02,
-                 f'{val:,.0f} MAD', ha='center', va='bottom', fontsize=14, fontweight='bold')
+                 f'{val:,.0f} MAD', ha='center', va='bottom', fontsize=16, fontweight='bold')
     
     ax2.set_ylabel('Montant (MAD)', fontsize=12, fontweight='bold')
-    ax2.set_title('Impact en MONTANT', fontsize=14, fontweight='bold')
-    ax2.set_ylim(0, max(montants) * 1.15 if max(montants) > 0 else 1)
+    ax2.set_title('IMPACT EN MONTANT', fontsize=14, fontweight='bold')
+    ax2.set_ylim(0, max(montants) * 1.2 if max(montants) > 0 else 1)
     
-    # Total
     total_montant = fp_montant + fn_montant
-    ax2.text(0.5, 0.95, f'Total: {total_montant:,.0f} MAD', transform=ax2.transAxes,
-             ha='center', fontsize=12, bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    ax2.text(0.5, 0.92, f'Total: {total_montant:,.0f} MAD', transform=ax2.transAxes,
+             ha='center', fontsize=13, fontweight='bold',
+             bbox=dict(boxstyle='round', facecolor='#ffeb3b', alpha=0.8))
     
-    # Titre global
-    fig.suptitle('IMPACT DES ERREURS DE PRÉDICTION', fontsize=16, fontweight='bold', y=1.02)
+    fig.suptitle('IMPACT DES ERREURS - 4 FAMILLES PERFORMANTES', fontsize=16, fontweight='bold', y=1.02)
     
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor='white')
     plt.close()
-    print(f"✅ Impact FP/FN: {output_path}")
+    print(f"✅ {output_path}")
 
 
-def plot_impact_total(n_auto, n_manuel, gain_auto, fp_montant, fn_montant, output_path):
-    """Graphique impact total avec gains et pertes."""
+def plot_gain_total(n_auto, n_manuel, gain_auto, fp_montant, fn_montant, output_path):
+    """Graphique gain total."""
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     
-    # === Graphique 1: Automatisation ===
+    # Automatisation
     ax1 = axes[0]
+    cats = ['Automatisé', 'Manuel']
+    vals = [n_auto, n_manuel]
+    colors_bar = [COLORS['auto'], '#bdc3c7']
     
-    categories = ['Automatisé', 'Manuel']
-    values = [n_auto, n_manuel]
-    colors_bar = [COLORS['auto'], '#95a5a6']
-    
-    bars = ax1.bar(categories, values, color=colors_bar, edgecolor='white', linewidth=2)
-    
+    bars = ax1.bar(cats, vals, color=colors_bar, edgecolor='white', linewidth=2)
     total = n_auto + n_manuel
-    for bar, val in zip(bars, values):
-        pct = val / total * 100
+    for bar, val in zip(bars, vals):
+        pct = val / total * 100 if total > 0 else 0
         ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + total*0.02,
                  f'{val:,}\n({pct:.1f}%)', ha='center', va='bottom', fontsize=14, fontweight='bold')
     
     ax1.set_ylabel('Nombre de réclamations', fontsize=12, fontweight='bold')
     ax1.set_title('TAUX D\'AUTOMATISATION', fontsize=14, fontweight='bold')
-    ax1.set_ylim(0, max(values) * 1.2)
+    ax1.set_ylim(0, max(vals) * 1.25)
     
-    # === Graphique 2: Bilan Financier ===
+    # Bilan financier
     ax2 = axes[1]
     
-    # Calculs
-    perte_fp = fp_montant  # Montant perdu sur faux positifs
-    perte_fn = fn_montant  # Montant d'insatisfaction (ou à rembourser plus tard)
-    gain_net = gain_auto - perte_fp
+    gain_net = gain_auto - fp_montant
     
-    categories = ['Gain\nAutomatisation', 'Perte\nFaux Positifs', 'Perte\nFaux Négatifs', 'GAIN NET']
-    values = [gain_auto, -perte_fp, -perte_fn, gain_net]
-    colors_fin = [COLORS['gain'], COLORS['perte'], COLORS['fn'], 
-                  COLORS['gain'] if gain_net > 0 else COLORS['perte']]
+    cats2 = ['Gain\nAutomatisation', 'Perte\nFaux Positifs', 'Perte\nFaux Négatifs', 'GAIN NET']
+    vals2 = [gain_auto, -fp_montant, -fn_montant, gain_net]
+    colors2 = [COLORS['gain'], COLORS['perte'], COLORS['fn'],
+               COLORS['gain'] if gain_net > 0 else COLORS['perte']]
     
-    bars2 = ax2.bar(categories, values, color=colors_fin, edgecolor='white', linewidth=2)
+    bars2 = ax2.bar(cats2, vals2, color=colors2, edgecolor='white', linewidth=2)
     
-    for bar, val in zip(bars2, values):
-        y_pos = bar.get_height() + (max(abs(v) for v in values) * 0.02 * (1 if val >= 0 else -1))
+    for bar, val in zip(bars2, vals2):
+        y_pos = bar.get_height() + (max(abs(v) for v in vals2) * 0.03 * (1 if val >= 0 else -1))
         va = 'bottom' if val >= 0 else 'top'
         ax2.text(bar.get_x() + bar.get_width()/2, y_pos,
-                 f'{val:+,.0f} MAD', ha='center', va=va, fontsize=12, fontweight='bold')
+                 f'{val:+,.0f} MAD', ha='center', va=va, fontsize=11, fontweight='bold')
     
-    ax2.axhline(y=0, color='black', linewidth=1)
+    ax2.axhline(y=0, color='black', linewidth=1.5)
     ax2.set_ylabel('Montant (MAD)', fontsize=12, fontweight='bold')
     ax2.set_title('BILAN FINANCIER', fontsize=14, fontweight='bold')
     
-    # Ajuster les limites
-    max_val = max(abs(v) for v in values)
+    max_val = max(abs(v) for v in vals2) if vals2 else 1
     ax2.set_ylim(-max_val * 1.3, max_val * 1.3)
     
-    # Titre global
-    fig.suptitle(f'IMPACT TOTAL - Gain par réclamation automatisée: {COUT_TRAITEMENT_MANUEL} MAD',
-                 fontsize=16, fontweight='bold', y=1.02)
+    fig.suptitle(f'GAIN TOTAL - 4 FAMILLES PERFORMANTES\n(169 MAD économisés par réclamation automatisée)',
+                 fontsize=16, fontweight='bold', y=1.05)
     
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor='white')
     plt.close()
-    print(f"✅ Impact total: {output_path}")
+    print(f"✅ {output_path}")
 
 
-def plot_summary_dashboard(metrics, n_auto, n_manuel, gain_auto, fp_count, fn_count, 
-                           fp_montant, fn_montant, output_path):
-    """Dashboard récapitulatif."""
-    fig = plt.figure(figsize=(16, 10))
+def plot_detail_par_famille(df_results, famille_col, output_path):
+    """Détail par famille."""
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     
-    # Grille
-    gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
+    familles = df_results[famille_col].unique()
     
-    # === KPIs en haut ===
-    ax_kpi = fig.add_subplot(gs[0, :])
-    ax_kpi.axis('off')
+    for idx, famille in enumerate(familles[:4]):
+        ax = axes[idx // 2, idx % 2]
+        sub = df_results[df_results[famille_col] == famille]
+        
+        n_total = len(sub)
+        n_fp = sub['is_fp'].sum()
+        n_fn = sub['is_fn'].sum()
+        n_correct = n_total - n_fp - n_fn
+        
+        vals = [n_correct, n_fp, n_fn]
+        labels = ['Correct', 'Faux Positif', 'Faux Négatif']
+        colors = [COLORS['tp'], COLORS['fp'], COLORS['fn']]
+        
+        bars = ax.bar(labels, vals, color=colors)
+        for bar, val in zip(bars, vals):
+            if val > 0:
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + n_total*0.02,
+                        f'{val}', ha='center', va='bottom', fontsize=12, fontweight='bold')
+        
+        accuracy = n_correct / n_total * 100 if n_total > 0 else 0
+        ax.set_title(f'{famille[:30]}\nN={n_total} | Accuracy={accuracy:.1f}%', fontsize=11, fontweight='bold')
+        ax.set_ylim(0, max(vals) * 1.2 if max(vals) > 0 else 1)
     
-    kpis = [
-        ('Accuracy', f"{metrics['accuracy']*100:.1f}%", COLORS['tp']),
-        ('Précision', f"{metrics['precision']*100:.1f}%", COLORS['tn']),
-        ('Recall', f"{metrics['recall']*100:.1f}%", COLORS['auto']),
-        ('F1-Score', f"{metrics['f1']*100:.1f}%", COLORS['gain']),
-        ('Taux Auto', f"{n_auto/(n_auto+n_manuel)*100:.1f}%", COLORS['auto']),
-    ]
+    fig.suptitle('DÉTAIL PAR FAMILLE', fontsize=16, fontweight='bold', y=1.02)
     
-    for i, (label, value, color) in enumerate(kpis):
-        x = 0.1 + i * 0.18
-        ax_kpi.text(x, 0.7, value, fontsize=28, fontweight='bold', color=color,
-                    ha='center', transform=ax_kpi.transAxes)
-        ax_kpi.text(x, 0.3, label, fontsize=12, ha='center', transform=ax_kpi.transAxes)
-    
-    ax_kpi.set_title('MÉTRIQUES CLÉS', fontsize=16, fontweight='bold', pad=20)
-    
-    # === Matrice de confusion (petite) ===
-    ax_cm = fig.add_subplot(gs[1, 0])
-    cm = metrics['confusion_matrix']
-    im = ax_cm.imshow([[cm[0,0], cm[0,1]], [cm[1,0], cm[1,1]]], cmap='Blues', alpha=0.7)
-    
-    for i in range(2):
-        for j in range(2):
-            ax_cm.text(j, i, f'{cm[i,j]:,}', ha='center', va='center', fontsize=14, fontweight='bold')
-    
-    ax_cm.set_xticks([0, 1])
-    ax_cm.set_yticks([0, 1])
-    ax_cm.set_xticklabels(['Non Fondée', 'Fondée'])
-    ax_cm.set_yticklabels(['Non Fondée', 'Fondée'])
-    ax_cm.set_xlabel('Prédit')
-    ax_cm.set_ylabel('Réel')
-    ax_cm.set_title('Matrice de Confusion', fontweight='bold')
-    
-    # === Erreurs en nombre ===
-    ax_err = fig.add_subplot(gs[1, 1])
-    bars = ax_err.bar(['FP', 'FN'], [fp_count, fn_count], color=[COLORS['fp'], COLORS['fn']])
-    for bar, val in zip(bars, [fp_count, fn_count]):
-        ax_err.text(bar.get_x() + bar.get_width()/2, bar.get_height(), f'{val:,}',
-                    ha='center', va='bottom', fontsize=12, fontweight='bold')
-    ax_err.set_title('Erreurs (Nombre)', fontweight='bold')
-    ax_err.set_ylabel('Nombre')
-    
-    # === Erreurs en montant ===
-    ax_mont = fig.add_subplot(gs[1, 2])
-    bars = ax_mont.bar(['FP', 'FN'], [fp_montant, fn_montant], color=[COLORS['fp'], COLORS['fn']])
-    for bar, val in zip(bars, [fp_montant, fn_montant]):
-        ax_mont.text(bar.get_x() + bar.get_width()/2, bar.get_height(), f'{val:,.0f}',
-                     ha='center', va='bottom', fontsize=10, fontweight='bold')
-    ax_mont.set_title('Erreurs (Montant MAD)', fontweight='bold')
-    ax_mont.set_ylabel('MAD')
-    
-    # === Automatisation ===
-    ax_auto = fig.add_subplot(gs[2, 0])
-    ax_auto.pie([n_auto, n_manuel], labels=['Automatisé', 'Manuel'],
-                colors=[COLORS['auto'], '#95a5a6'], autopct='%1.1f%%',
-                explode=(0.05, 0), startangle=90)
-    ax_auto.set_title('Taux Automatisation', fontweight='bold')
-    
-    # === Bilan financier ===
-    ax_fin = fig.add_subplot(gs[2, 1:])
-    gain_net = gain_auto - fp_montant
-    
-    categories = ['Gain Auto', 'Perte FP', 'GAIN NET']
-    values = [gain_auto, -fp_montant, gain_net]
-    colors_fin = [COLORS['gain'], COLORS['perte'], COLORS['gain'] if gain_net > 0 else COLORS['perte']]
-    
-    bars = ax_fin.barh(categories, values, color=colors_fin)
-    ax_fin.axvline(x=0, color='black', linewidth=1)
-    
-    for bar, val in zip(bars, values):
-        x_pos = val + (max(abs(v) for v in values) * 0.02 * (1 if val >= 0 else -1))
-        ax_fin.text(x_pos, bar.get_y() + bar.get_height()/2, f'{val:+,.0f} MAD',
-                    ha='left' if val >= 0 else 'right', va='center', fontsize=11, fontweight='bold')
-    
-    ax_fin.set_title('Bilan Financier', fontweight='bold')
-    ax_fin.set_xlabel('MAD')
-    
-    # Titre global
-    fig.suptitle('DASHBOARD RÉCAPITULATIF - INFÉRENCE SUR TOUTE LA BASE',
-                 fontsize=18, fontweight='bold', y=0.98)
-    
+    plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor='white')
     plt.close()
-    print(f"✅ Dashboard: {output_path}")
+    print(f"✅ {output_path}")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data', '-d', required=True, help='Fichier Excel')
-    parser.add_argument('--output', '-o', default='resultats_inference', help='Dossier de sortie')
-    parser.add_argument('--montant-col', '-m', default=None, help='Nom de la colonne montant (auto-détecté si non spécifié)')
+    parser.add_argument('--data', '-d', required=True)
+    parser.add_argument('--output', '-o', default='resultats_4_familles')
+    parser.add_argument('--montant-col', '-m', default=None)
     args = parser.parse_args()
     
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     print("=" * 60)
-    print("INFÉRENCE COMPLÈTE + GRAPHIQUES D'IMPACT")
+    print("INFÉRENCE - 4 FAMILLES PERFORMANTES")
     print("=" * 60)
     
     # 1. Charger
     print(f"\n📂 Chargement: {args.data}")
-    df = pd.read_excel(args.data)
-    print(f"   {len(df)} lignes")
+    df_full = pd.read_excel(args.data)
+    print(f"   Base complète: {len(df_full)} lignes")
     
     # 2. Détecter colonnes
-    target_col, montant_col = detect_columns(df)
+    target_col, montant_col, famille_col = detect_columns(df_full)
     if args.montant_col:
         montant_col = args.montant_col
     
     print(f"   Cible: {target_col}")
     print(f"   Montant: {montant_col}")
+    print(f"   Famille: {famille_col}")
     
-    if montant_col is None:
-        print("   ⚠️ Colonne montant non trouvée, utilisation de 0")
+    # 3. Filtrer sur les 4 familles
+    print(f"\n🎯 Filtrage sur les 4 familles performantes...")
+    df = filter_familles(df_full, famille_col)
+    print(f"   Familles trouvées: {df[famille_col].unique().tolist()}")
+    print(f"   Lignes après filtre: {len(df)}")
     
-    # 3. Préparer
+    if len(df) == 0:
+        print("❌ Aucune ligne trouvée pour ces familles!")
+        print(f"   Familles disponibles: {df_full[famille_col].unique().tolist()}")
+        return
+    
+    # 4. Préparer
     X, y = prepare_data(df, target_col)
     print(f"   Features: {X.shape[1]}")
     
-    # 4. Entraîner
-    print("\n🚀 Entraînement XGBoost...")
-    model = train_model(X, y)
+    # 5. Entraîner sur base complète puis prédire sur filtrée
+    print("\n🚀 Entraînement XGBoost sur base complète...")
+    X_full, y_full = prepare_data(df_full, target_col)
+    model = train_model(X_full, y_full)
     
-    # 5. Inférence sur TOUTE la base
-    print("\n🔮 Inférence sur toute la base...")
+    # 6. Inférence sur les 4 familles
+    print("\n🔮 Inférence sur les 4 familles...")
+    
+    # Aligner les colonnes
+    missing_cols = set(X_full.columns) - set(X.columns)
+    for col in missing_cols:
+        X[col] = 0
+    X = X[X_full.columns]
+    
     y_pred = model.predict(X)
     y_proba = model.predict_proba(X)[:, 1]
     
-    # 6. Calculs
+    # 7. Calculs
     cm = confusion_matrix(y, y_pred)
     tn, fp, fn, tp = cm.ravel()
     
@@ -432,7 +387,6 @@ def main():
     else:
         montants = np.zeros(len(df))
     
-    # Masques
     mask_fp = (y_pred == 1) & (y.values == 0)
     mask_fn = (y_pred == 0) & (y.values == 1)
     
@@ -449,75 +403,112 @@ def main():
     # Métriques
     metrics = {
         'accuracy': accuracy_score(y, y_pred),
-        'precision': precision_score(y, y_pred),
-        'recall': recall_score(y, y_pred),
-        'f1': f1_score(y, y_pred),
-        'confusion_matrix': cm
+        'precision': precision_score(y, y_pred, zero_division=0),
+        'recall': recall_score(y, y_pred, zero_division=0),
+        'f1': f1_score(y, y_pred, zero_division=0),
     }
     
-    # 7. Afficher résultats
-    print(f"\n📊 RÉSULTATS:")
+    # 8. Afficher
+    print(f"\n📊 RÉSULTATS - 4 FAMILLES:")
+    print(f"   Total: {len(df):,} réclamations")
     print(f"   Accuracy: {metrics['accuracy']*100:.1f}%")
     print(f"   Précision: {metrics['precision']*100:.1f}%")
     print(f"   Recall: {metrics['recall']*100:.1f}%")
     print(f"   F1-Score: {metrics['f1']*100:.1f}%")
-    print(f"\n   Matrice de confusion:")
-    print(f"   TN={tn:,} | FP={fp:,}")
+    print(f"\n   TN={tn:,} | FP={fp:,}")
     print(f"   FN={fn:,} | TP={tp:,}")
     print(f"\n   Faux Positifs: {fp:,} ({fp_montant:,.0f} MAD)")
     print(f"   Faux Négatifs: {fn:,} ({fn_montant:,.0f} MAD)")
     print(f"\n   Automatisé: {n_auto:,} ({n_auto/len(df)*100:.1f}%)")
-    print(f"   Manuel: {n_manuel:,} ({n_manuel/len(df)*100:.1f}%)")
-    print(f"\n   Gain automatisation: {gain_auto:,.0f} MAD")
-    print(f"   Gain net (après pertes FP): {gain_auto - fp_montant:,.0f} MAD")
+    print(f"   Gain automatisation: {gain_auto:,.0f} MAD")
+    print(f"   GAIN NET: {gain_auto - fp_montant:,.0f} MAD")
     
-    # 8. Générer graphiques
+    # 9. Graphiques
     print(f"\n📈 Génération des graphiques...")
     
-    # Matrice de confusion
-    plot_confusion_matrix(y, y_pred, output_dir / '1_matrice_confusion.png')
+    plot_confusion_matrix(y, y_pred, 'MATRICE DE CONFUSION - 4 FAMILLES',
+                          output_dir / '1_matrice_confusion.png')
     
-    # Impact FP/FN
-    plot_impact_fp_fn(fp, fn, fp_montant, fn_montant, output_dir / '2_impact_fp_fn.png')
+    plot_impact_errors(fp, fn, fp_montant, fn_montant,
+                       output_dir / '2_impact_erreurs.png')
     
-    # Impact total
-    plot_impact_total(n_auto, n_manuel, gain_auto, fp_montant, fn_montant,
-                      output_dir / '3_impact_total.png')
+    plot_gain_total(n_auto, n_manuel, gain_auto, fp_montant, fn_montant,
+                    output_dir / '3_gain_total.png')
     
-    # Dashboard
-    plot_summary_dashboard(metrics, n_auto, n_manuel, gain_auto, fp, fn,
-                           fp_montant, fn_montant, output_dir / '4_dashboard.png')
+    # Détail par famille
+    df_results = df.copy()
+    df_results['prediction'] = y_pred
+    df_results['proba'] = y_proba
+    df_results['is_fp'] = mask_fp
+    df_results['is_fn'] = mask_fn
     
-    # 9. Export Excel récapitulatif
+    plot_detail_par_famille(df_results, famille_col, output_dir / '4_detail_familles.png')
+    
+    # 10. Excel
     print(f"\n💾 Export Excel...")
-    summary_data = {
-        'Métrique': ['Accuracy', 'Précision', 'Recall', 'F1-Score', 
+    
+    # Résumé global
+    summary = pd.DataFrame({
+        'Métrique': ['Total réclamations', 'Accuracy', 'Précision', 'Recall', 'F1-Score',
                      'Vrais Négatifs', 'Faux Positifs', 'Faux Négatifs', 'Vrais Positifs',
                      'Montant FP (MAD)', 'Montant FN (MAD)',
                      'N Automatisé', 'N Manuel', 'Taux Automatisation',
-                     'Gain Automatisation (MAD)', 'Gain Net (MAD)'],
-        'Valeur': [f"{metrics['accuracy']*100:.1f}%", f"{metrics['precision']*100:.1f}%",
+                     'Gain Automatisation (MAD)', 'GAIN NET (MAD)'],
+        'Valeur': [len(df), f"{metrics['accuracy']*100:.1f}%", f"{metrics['precision']*100:.1f}%",
                    f"{metrics['recall']*100:.1f}%", f"{metrics['f1']*100:.1f}%",
                    tn, fp, fn, tp,
                    f"{fp_montant:,.0f}", f"{fn_montant:,.0f}",
                    n_auto, n_manuel, f"{n_auto/len(df)*100:.1f}%",
                    f"{gain_auto:,.0f}", f"{gain_auto - fp_montant:,.0f}"]
-    }
+    })
     
-    df_summary = pd.DataFrame(summary_data)
-    df_summary.to_excel(output_dir / 'resume_inference.xlsx', index=False)
-    print(f"✅ Résumé Excel: {output_dir / 'resume_inference.xlsx'}")
+    # Détail par famille
+    detail_famille = []
+    for famille in df[famille_col].unique():
+        sub = df_results[df_results[famille_col] == famille]
+        n = len(sub)
+        n_fp = sub['is_fp'].sum()
+        n_fn = sub['is_fn'].sum()
+        
+        if montant_col and montant_col in sub.columns:
+            montant_fp = sub.loc[sub['is_fp'], montant_col].sum()
+            montant_fn = sub.loc[sub['is_fn'], montant_col].sum()
+        else:
+            montant_fp, montant_fn = 0, 0
+        
+        n_auto_f = ((sub['proba'] <= SEUIL_REJET) | (sub['proba'] >= SEUIL_VALIDATION)).sum()
+        
+        detail_famille.append({
+            'Famille': famille,
+            'N_Total': n,
+            'N_Automatise': n_auto_f,
+            'Taux_Auto_%': round(n_auto_f / n * 100, 1) if n > 0 else 0,
+            'N_Faux_Positifs': n_fp,
+            'N_Faux_Negatifs': n_fn,
+            'Montant_FP': montant_fp,
+            'Montant_FN': montant_fn,
+            'Gain_Auto_MAD': n_auto_f * COUT_TRAITEMENT_MANUEL,
+        })
+    
+    df_detail = pd.DataFrame(detail_famille)
+    
+    with pd.ExcelWriter(output_dir / 'resume_4_familles.xlsx', engine='openpyxl') as writer:
+        summary.to_excel(writer, sheet_name='Resume_Global', index=False)
+        df_detail.to_excel(writer, sheet_name='Detail_par_Famille', index=False)
+    
+    print(f"✅ {output_dir / 'resume_4_familles.xlsx'}")
     
     print("\n" + "=" * 60)
     print("✅ TERMINÉ")
     print("=" * 60)
-    print(f"\n📁 Fichiers générés dans: {output_dir}")
+    print(f"\n📁 Fichiers dans: {output_dir}")
     print("   • 1_matrice_confusion.png")
-    print("   • 2_impact_fp_fn.png")
-    print("   • 3_impact_total.png")
-    print("   • 4_dashboard.png")
-    print("   • resume_inference.xlsx")
+    print("   • 2_impact_erreurs.png")
+    print("   • 3_gain_total.png")
+    print("   • 4_detail_familles.png")
+    print("   • resume_4_familles.xlsx")
 
 
 if __name__ == "__main__":
     main()
+
