@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environments
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Data (optionnel - décommenter si vous ne voulez pas versionner les données)
+# data/raw/*.xlsx
+# data/raw/*.csv
+
+# Models (optionnel - décommenter si les modèles sont trop gros)
+# outputs/models/*.pkl
+
+# OS
+.DS_Store
+Thumbs.db
