@@ -14,40 +14,7 @@ Pipeline complet de Machine Learning pour la classification des réclamations ba
 - ✅ **Analyse de Drift** : Tests statistiques KS et Chi²
 - ✅ **Rapports Complets** : Métriques, visualisations, recommandations
 
-## 🎯 Résultats Obtenus
 
-### Performance 2024 (Entraînement)
-| Métrique | Valeur |
-|----------|--------|
-| **Accuracy** | 81.5% |
-| **Precision** | 84.6% |
-| **Recall** | 80.1% |
-| **F1-Score** | 82.3% |
-| **ROC-AUC** | 90.7% |
-| **PR-AUC** | 91.5% |
-
-### Performance 2025 (Test Temporel)
-| Métrique | Valeur | Dégradation |
-|----------|--------|-------------|
-| **Accuracy** | 58.4% | **-28.4%** 🚨 |
-| **F1-Score** | 57.6% | -30.0% |
-| **ROC-AUC** | 61.1% | -32.6% |
-
-### Analyse du Drift Détecté
-
-**Features avec drift significatif (p < 0.05):**
-
-| Feature | Shift | Impact |
-|---------|-------|--------|
-| `Montant_demande` | +15.1% | 🔴 ÉLEVÉ |
-| `PNB_cumule` | +19.4% | 🔴 ÉLEVÉ |
-| `Delai_traitement_jours` | +4.3% | 🟡 MOYEN |
-
-### Recommandation Finale
-
-❌ **NO-GO POUR PRODUCTION**
-
-La dégradation de 28% sur les données 2025 est trop importante. **Réentraînement nécessaire** sur des données plus récentes incluant 2025.
 
 ## 📁 Structure du Projet
 
@@ -104,19 +71,9 @@ pip install -r requirements.txt
 
 ## 🎬 Utilisation
 
-### 1. Génération des Données (Optionnel)
 
-Si vous n'avez pas les fichiers Excel :
 
-```bash
-python src/utils/data_generator.py
-```
-
-Cela génère :
-- `data/raw/reclamations_2024.xlsx` (33 000 réclamations)
-- `data/raw/reclamations_2025.xlsx` (8 000 réclamations)
-
-### 2. Exécution du Pipeline Complet
+### 1. Exécution du Pipeline Complet
 
 ```bash
 python main_pipeline.py
@@ -124,7 +81,7 @@ python main_pipeline.py
 
 **Durée estimée:** 10-15 minutes (avec 50 trials Optuna)
 
-### 3. Configuration Personnalisée
+### 2. Configuration Personnalisée
 
 Éditez le bloc `config` dans `main_pipeline.py` :
 
