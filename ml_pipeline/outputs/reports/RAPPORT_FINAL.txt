@@ -1,0 +1,75 @@
+================================================================================
+RAPPORT FINAL - PIPELINE ML CLASSIFICATION DES RÉCLAMATIONS
+================================================================================
+
+Date: 2026-01-11 22:12:48
+Modèle: XGBOOST
+
+--------------------------------------------------------------------------------
+DONNÉES
+--------------------------------------------------------------------------------
+Entraînement 2024: 33000 réclamations
+Test 2025:         8000 réclamations
+Features initiales: 17
+Features après preprocessing: 37
+Features sélectionnées: 12
+
+--------------------------------------------------------------------------------
+PERFORMANCE 2024 (Entraînement)
+--------------------------------------------------------------------------------
+accuracy                 : 0.8154
+precision                : 0.8455
+recall                   : 0.8012
+f1_score                 : 0.8228
+specificity              : 0.8317
+roc_auc                  : 0.9065
+pr_auc                   : 0.9148
+
+--------------------------------------------------------------------------------
+PERFORMANCE 2025 (Test Temporel)
+--------------------------------------------------------------------------------
+accuracy                 : 0.5839
+precision                : 0.5771
+recall                   : 0.5740
+f1_score                 : 0.5755
+specificity              : 0.5934
+roc_auc                  : 0.6105
+pr_auc                   : 0.5952
+
+--------------------------------------------------------------------------------
+COMPARAISON 2024 vs 2025
+--------------------------------------------------------------------------------
+Dégradation Accuracy: -28.39%
+❌ ALERTE: Dégradation > 5%
+
+--------------------------------------------------------------------------------
+TOP 20 FEATURES IMPORTANTES
+--------------------------------------------------------------------------------
+ 1. Categorie_encoded                        1.0000
+ 2. Famille_Produit_encoded                  0.5391
+ 3. log_montant                              0.2295
+ 4. montant_x_anciennete                     0.2098
+ 5. ratio_montant_famille                    0.1894
+ 6. PNB_cumule                               0.1749
+ 7. Montant_demande                          0.1730
+ 8. ratio_pnb_montant                        0.1644
+ 9. ratio_pnb_median                         0.1639
+10. ratio_produits_anciennete                0.1375
+11. Anciennete_annees                        0.1225
+12. log_anciennete                           0.1107
+13. taux_reclamations_annuel                 0.1073
+14. delai_x_produits                         0.1020
+15. Age_client                               0.0998
+16. Delai_traitement_jours                   0.0829
+17. mois                                     0.0755
+18. is_high_value                            0.0524
+19. jour_semaine                             0.0408
+20. Nb_produits                              0.0393
+
+--------------------------------------------------------------------------------
+RECOMMANDATION FINALE
+--------------------------------------------------------------------------------
+❌ NO-GO - RÉENTRAÎNEMENT NÉCESSAIRE
+Dégradation trop importante sur données 2025
+
+================================================================================

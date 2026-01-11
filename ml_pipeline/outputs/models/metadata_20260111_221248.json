@@ -1,0 +1,60 @@
+{
+  "timestamp": "20260111_221248",
+  "model_type": "xgboost",
+  "n_features": 12,
+  "n_samples_train": 33000,
+  "n_samples_test": 8000,
+  "best_cv_score": 0.6075370622515448,
+  "best_hyperparameters": {
+    "max_depth": 9,
+    "learning_rate": 0.01643759038841546,
+    "n_estimators": 600,
+    "min_child_weight": 1,
+    "subsample": 0.7113856108883331,
+    "colsample_bytree": 0.6431071436989632,
+    "gamma": 0.76774757103055,
+    "reg_alpha": 0.00027375352319617226,
+    "reg_lambda": 4.821719295156862e-06
+  },
+  "metrics_2024": {
+    "accuracy": 0.8153939393939394,
+    "precision": 0.845509984455339,
+    "recall": 0.8012464589235128,
+    "f1_score": 0.8227833372120084,
+    "true_negatives": 12766,
+    "false_positives": 2584,
+    "false_negatives": 3508,
+    "true_positives": 14142,
+    "specificity": 0.8316612377850163,
+    "roc_auc": 0.906500357106606,
+    "pr_auc": 0.9147509509165385
+  },
+  "metrics_2025": {
+    "accuracy": 0.583875,
+    "precision": 0.5770902582459729,
+    "recall": 0.5740081383519837,
+    "f1_score": 0.5755450720387607,
+    "true_negatives": 2414,
+    "false_positives": 1654,
+    "false_negatives": 1675,
+    "true_positives": 2257,
+    "specificity": 0.5934119960668633,
+    "roc_auc": 0.6104508890569375,
+    "pr_auc": 0.5952405321283232
+  },
+  "selected_features": [
+    "Categorie_encoded",
+    "Famille_Produit_encoded",
+    "log_montant",
+    "montant_x_anciennete",
+    "ratio_montant_famille",
+    "PNB_cumule",
+    "Montant_demande",
+    "ratio_pnb_montant",
+    "ratio_pnb_median",
+    "ratio_produits_anciennete",
+    "Anciennete_annees",
+    "taux_reclamations_annuel"
+  ],
+  "calibration_method": "isotonic"
+}
