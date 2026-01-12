@@ -1,0 +1,56 @@
+{
+  "timestamp": "20260112_103727",
+  "model_type": "xgboost",
+  "n_features": 2,
+  "n_samples_train": 33000,
+  "n_samples_test": 8000,
+  "best_cv_score": 0.9988927833481978,
+  "best_hyperparameters": {
+    "max_depth": 8,
+    "learning_rate": 0.010725209743171997,
+    "n_estimators": 1000,
+    "min_child_weight": 17,
+    "subsample": 0.6849356442713105,
+    "colsample_bytree": 0.6727299868828402,
+    "gamma": 0.9170225492671691,
+    "reg_alpha": 5.472429642032198e-06,
+    "reg_lambda": 0.00052821153945323
+  },
+  "metrics_2024": {
+    "accuracy": 0.9988181818181818,
+    "precision": 1.0,
+    "recall": 0.9977881125226861,
+    "f1_score": 0.9988928317955997,
+    "true_negatives": 15368,
+    "false_positives": 0,
+    "false_negatives": 39,
+    "true_positives": 17593,
+    "specificity": 1.0,
+    "roc_auc": 0.9988940562613431,
+    "pr_auc": 0.9989699307045042
+  },
+  "metrics_2025": {
+    "accuracy": 0.999625,
+    "precision": 1.0,
+    "recall": 0.9992473657802308,
+    "f1_score": 0.9996235412222362,
+    "true_negatives": 4014,
+    "false_positives": 0,
+    "false_negatives": 3,
+    "true_positives": 3983,
+    "specificity": 1.0,
+    "roc_auc": 0.9996236828901154,
+    "pr_auc": 0.9996223657802307
+  },
+  "family_analysis": {
+    "best_family": {
+      "name": "Mon\u00e9tique",
+      "f1_score": 1.0
+    },
+    "worst_family": {
+      "name": "Frais bancaires",
+      "f1_score": 0.9982132221560452
+    },
+    "mean_f1": 0.9995533055390113,
+    "std_f1": 0.0008933889219773783,
+    "total_samples": 

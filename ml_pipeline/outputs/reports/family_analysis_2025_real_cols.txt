@@ -1,0 +1,111 @@
+================================================================================
+RAPPORT DÉTAILLÉ PAR FAMILLE PRODUIT
+================================================================================
+
+================================================================================
+FAMILLE: Monétique
+================================================================================
+Volume:              1981 réclamations
+
+Métriques de Performance:
+  - Accuracy:        100.00%
+  - Precision:       100.00%
+  - Recall:          100.00%
+  - F1-Score:        100.00%
+
+Taux de Fondement:
+  - Réel:            64.92%
+  - Prédit:          64.92%
+  - Écart:           0.00%
+
+Montant:
+  - Montant moyen:   554.94 MAD
+
+Matrice de Confusion:
+  - True Negatives:  695
+  - False Positives: 0
+  - False Negatives: 0
+  - True Positives:  1286
+
+================================================================================
+FAMILLE: Crédit
+================================================================================
+Volume:              1951 réclamations
+
+Métriques de Performance:
+  - Accuracy:        100.00%
+  - Precision:       100.00%
+  - Recall:          100.00%
+  - F1-Score:        100.00%
+
+Taux de Fondement:
+  - Réel:            52.38%
+  - Prédit:          52.38%
+  - Écart:           0.00%
+
+Montant:
+  - Montant moyen:   9981.19 MAD
+
+Matrice de Confusion:
+  - True Negatives:  929
+  - False Positives: 0
+  - False Negatives: 0
+  - True Positives:  1022
+
+================================================================================
+FAMILLE: Epargne
+================================================================================
+Volume:              2044 réclamations
+
+Métriques de Performance:
+  - Accuracy:        100.00%
+  - Precision:       100.00%
+  - Recall:          100.00%
+  - F1-Score:        100.00%
+
+Taux de Fondement:
+  - Réel:            40.95%
+  - Prédit:          40.95%
+  - Écart:           0.00%
+
+Montant:
+  - Montant moyen:   6171.12 MAD
+
+Matrice de Confusion:
+  - True Negatives:  1207
+  - False Positives: 0
+  - False Negatives: 0
+  - True Positives:  837
+
+================================================================================
+FAMILLE: Frais bancaires
+================================================================================
+Volume:              2024 réclamations
+
+Métriques de Performance:
+  - Accuracy:        99.85%
+  - Precision:       100.00%
+  - Recall:          99.64%
+  - F1-Score:        99.82%
+
+Taux de Fondement:
+  - Réel:            41.55%
+  - Prédit:          41.40%
+  - Écart:           0.15%
+
+Montant:
+  - Montant moyen:   41.24 MAD
+
+Matrice de Confusion:
+  - True Negatives:  1183
+  - False Positives: 0
+  - False Negatives: 3
+  - True Positives:  838
+
+================================================================================
+RÉSUMÉ
+================================================================================
+Meilleure famille (F1): Monétique (100.00%)
+Moins bonne famille (F1): Frais bancaires (99.82%)
+F1 moyen global: 99.96%
+Écart-type F1: 0.09%
