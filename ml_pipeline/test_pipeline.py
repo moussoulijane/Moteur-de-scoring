@@ -5,7 +5,7 @@ import sys
 sys.path.append('src')
 
 import pandas as pd
-from preprocessing.preprocessor_real_columns import RealColumnRobustPreprocessor
+from preprocessing.preprocessor import RobustPreprocessor
 from evaluation.family_analysis import FamilyProductAnalyzer
 
 # Charger les données
@@ -24,7 +24,7 @@ print(df_2025.columns.tolist())
 
 # Test preprocessing
 print("\n⚙️  Test du preprocessing...")
-preprocessor = RealColumnRobustPreprocessor(target_col='Fondee')
+preprocessor = RobustPreprocessor(target_col='Fondee')
 
 print("\n🔧 Fit sur 2024...")
 preprocessor.fit(df_2024)
