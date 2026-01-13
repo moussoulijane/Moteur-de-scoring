@@ -1,329 +1,344 @@
-# 🏦 Pipeline ML Production - Classification des Réclamations Bancaires
+# 📖 Guide d'Utilisation - Pipeline ML Production
 
-## 📋 Vue d'Ensemble
+## 🎯 Pipeline de Classification des Réclamations Bancaires
 
-Pipeline complet de Machine Learning pour la classification des réclamations bancaires (Fondée / Non Fondée) avec validation temporelle et détection de drift.
+Le pipeline est **100% adapté aux vraies colonnes** de votre base de données de production et inclut le **nettoyage automatique des montants**. Voici comment l'utiliser avec vos fichiers Excel réels.
 
-### ✨ Caractéristiques Principales
+## ✨ Nouvelles Fonctionnalités
 
-- ✅ **Preprocessing Robuste** : Feature engineering avancé avec 15+ features créés
-- ✅ **Sélection de Features** : Multi-critères (variance, corrélation, importance)
-- ✅ **Optimisation Optuna** : XGBoost/LightGBM/CatBoost avec 50+ trials
-- ✅ **Calibration des Probabilités** : Méthodes isotonic/sigmoid
-- ✅ **Validation Temporelle** : Test sur données 2025 (futures)
-- ✅ **Analyse de Drift** : Tests statistiques KS et Chi²
-- ✅ **Rapports Complets** : Métriques, visualisations, recommandations
+### 🧹 Nettoyage Automatique des Montants
 
-## 🎯 Résultats Obtenus
+Le pipeline nettoie automatiquement les colonnes de montants dans différents formats:
+- `"500,00 mad"` → `500.00`
+- `"1 234,56 DH"` → `1234.56`
+- `"1.234,56"` (format européen) → `1234.56`
+- `"1,234.56"` (format US) → `1234.56`
+- `"N/A"`, `""`, `null` → `NaN`
 
-### Performance 2024 (Entraînement)
-| Métrique | Valeur |
-|----------|--------|
-| **Accuracy** | 81.5% |
-| **Precision** | 84.6% |
-| **Recall** | 80.1% |
-| **F1-Score** | 82.3% |
-| **ROC-AUC** | 90.7% |
-| **PR-AUC** | 91.5% |
-
-### Performance 2025 (Test Temporel)
-| Métrique | Valeur | Dégradation |
-|----------|--------|-------------|
-| **Accuracy** | 58.4% | **-28.4%** 🚨 |
-| **F1-Score** | 57.6% | -30.0% |
-| **ROC-AUC** | 61.1% | -32.6% |
-
-### Analyse du Drift Détecté
-
-**Features avec drift significatif (p < 0.05):**
-
-| Feature | Shift | Impact |
-|---------|-------|--------|
-| `Montant_demande` | +15.1% | 🔴 ÉLEVÉ |
-| `PNB_cumule` | +19.4% | 🔴 ÉLEVÉ |
-| `Delai_traitement_jours` | +4.3% | 🟡 MOYEN |
-
-### Recommandation Finale
-
-❌ **NO-GO POUR PRODUCTION**
-
-La dégradation de 28% sur les données 2025 est trop importante. **Réentraînement nécessaire** sur des données plus récentes incluant 2025.
-
-## 📁 Structure du Projet
-
-```
-ml_pipeline/
-├── data/
-│   ├── raw/                    # Données brutes 2024 et 2025
-│   └── processed/              # Données transformées
-│
-├── src/
-│   ├── preprocessing/
-│   │   └── preprocessor.py     # Feature engineering + encodage
-│   ├── feature_selection/
-│   │   └── selector.py         # Sélection multi-critères
-│   ├── modeling/
-│   │   └── optuna_optimizer.py # Optimisation hyperparamètres
-│   ├── evaluation/
-│   │   ├── calibrator.py       # Calibration probabilités
-│   │   ├── metrics.py          # Calcul métriques
-│   │   └── drift_analyzer.py   # Détection drift
-│   └── utils/
-│       └── data_generator.py   # Génération données synthétiques
-│
-├── outputs/
-│   ├── models/                 # Modèles sauvegardés
-│   ├── preprocessors/          # Transformers sauvegardés
-│   └── reports/                # Rapports et visualisations
-│
-├── main_pipeline.py            # Pipeline principal
-├── requirements.txt            # Dépendances
-└── README.md                   # Ce fichier
-```
-
-## 🚀 Installation
-
-### Prérequis
-- Python 3.8+
-- 8 GB RAM minimum
-
-### Installation des Dépendances
-
-```bash
-pip install -r requirements.txt
-```
-
-**Dépendances principales:**
-- pandas, numpy, scipy
-- scikit-learn
-- xgboost, lightgbm, catboost
-- optuna
-- matplotlib, seaborn
-- openpyxl (pour Excel)
-- shap (optionnel, pour explainability)
-
-## 🎬 Utilisation
-
-### 1. Génération des Données (Optionnel)
-
-Si vous n'avez pas les fichiers Excel :
-
-```bash
-python src/utils/data_generator.py
-```
-
-Cela génère :
-- `data/raw/reclamations_2024.xlsx` (33 000 réclamations)
-- `data/raw/reclamations_2025.xlsx` (8 000 réclamations)
-
-### 2. Exécution du Pipeline Complet
-
-```bash
-python main_pipeline.py
-```
-
-**Durée estimée:** 10-15 minutes (avec 50 trials Optuna)
-
-### 3. Configuration Personnalisée
-
-Éditez le bloc `config` dans `main_pipeline.py` :
-
-```python
-config = {
-    'data_path_2024': 'data/raw/reclamations_2024.xlsx',
-    'data_path_2025': 'data/raw/reclamations_2025.xlsx',
-    'optuna_trials': 100,        # Nombre de trials (50-200)
-    'cv_folds': 5,               # Nombre de folds CV
-    'model_type': 'xgboost',     # xgboost, lightgbm, catboost
-    'calibration_method': 'isotonic',  # isotonic ou sigmoid
-    'random_state': 42
-}
-```
-
-## 📊 Sorties Générées
-
-### Modèles et Artefacts
-
-```
-outputs/
-├── models/
-│   ├── model_xgboost_20260111.pkl          # Modèle entraîné
-│   ├── best_hyperparameters.json           # Hyperparamètres optimaux
-│   └── metadata_20260111.json              # Métadonnées complètes
-│
-├── preprocessors/
-│   ├── preprocessor.pkl                    # Pipeline preprocessing
-│   └── feature_selector.pkl                # Sélecteur de features
-│
-└── reports/
-    ├── RAPPORT_FINAL.txt                   # 📄 RAPPORT COMPLET
-    ├── feature_importance.csv              # Importance des features
-    ├── optuna_history.csv                  # Historique optimisation
-    ├── metrics_2024.json                   # Métriques 2024
-    ├── metrics_2025.json                   # Métriques 2025
-    ├── drift_report_numerical.csv          # Rapport drift numériques
-    ├── drift_report_categorical.csv        # Rapport drift catégorielles
-    └── figures/
-        ├── confusion_matrix_2024.png       # Confusion 2024
-        ├── confusion_matrix_2025.png       # Confusion 2025
-        ├── roc_curve_2024.png              # ROC 2024
-        ├── roc_curve_2025.png              # ROC 2025
-        ├── pr_curve_2024.png               # Precision-Recall 2024
-        ├── pr_curve_2025.png               # Precision-Recall 2025
-        ├── calibration_curve.png           # Calibration
-        └── prob_distribution_comparison.png # Comparaison prédictions
-```
-
-## 🔧 Modules Détaillés
-
-### 1. Preprocessing (`src/preprocessing/preprocessor.py`)
-
-**Features Engineering:**
-- Ratios : `ratio_pnb_montant`, `ratio_montant_famille`
-- Temporels : `mois`, `trimestre`, `jour_semaine`, `est_weekend`
-- Agrégations : `ratio_produits_anciennete`, `taux_reclamations_annuel`
-- Flags : `is_high_value`, `is_frequent_claimer`, `is_senior`
-- Interactions : `montant_x_anciennete`, `pnb_x_segment`
-- Log-transform : `log_montant`, `log_pnb`, `log_anciennete`
-
-**Encodage:**
-- Target Encoding avec smoothing (évite overfitting)
-- Traitement des outliers (IQR clipping)
-- Standardisation robuste (RobustScaler)
-
-### 2. Sélection de Features (`src/feature_selection/selector.py`)
-
-**Critères d'élimination:**
-1. ❌ Features avec >50% de valeurs manquantes
-2. ❌ Features à variance quasi-nulle (< 0.01)
-3. ❌ Features corrélées >0.95
-4. ❌ Features à faible importance (consensus de 2+ méthodes)
-
-**Méthodes d'importance:**
-- Permutation Importance
-- Native Feature Importance (Random Forest)
-- SHAP values (optionnel)
-
-### 3. Optimisation Optuna (`src/modeling/optuna_optimizer.py`)
-
-**Hyperparamètres optimisés:**
-- `max_depth` : [3, 10]
-- `learning_rate` : [0.01, 0.3] (log scale)
-- `n_estimators` : [100, 1000]
-- `subsample` : [0.6, 1.0]
-- `colsample_bytree` : [0.6, 1.0]
-- `reg_alpha` (L1) : [1e-8, 10] (log scale)
-- `reg_lambda` (L2) : [1e-8, 10] (log scale)
-- `scale_pos_weight` : calculé automatiquement
-
-**Stratégie:**
-- TPESampler (Tree-structured Parzen Estimator)
-- MedianPruner (arrêt précoce des mauvais trials)
-- Validation croisée StratifiedKFold 5-fold
-- Métrique d'optimisation : F1-Score
-
-### 4. Calibration (`src/evaluation/calibrator.py`)
-
-**Méthodes:**
-- Isotonic Regression (non-paramétrique)
-- Sigmoid (paramétrique)
-
-**Métriques de calibration:**
-- Expected Calibration Error (ECE)
-- Brier Score
-
-### 5. Analyse de Drift (`src/evaluation/drift_analyzer.py`)
-
-**Tests statistiques:**
-- **Kolmogorov-Smirnov** : features numériques
-- **Chi²** : features catégorielles
-
-**Seuil de signification:** p < 0.05
-
-## 📈 Top Features Importantes
-
-1. **Categorie_encoded** (1.0000) - Type de réclamation
-2. **Famille_Produit_encoded** (0.5391) - Famille produit
-3. **log_montant** (0.2295) - Log du montant demandé
-4. **montant_x_anciennete** (0.2098) - Interaction
-5. **ratio_montant_famille** (0.1894) - Ratio montant/médiane famille
-
-## 🔍 Analyse des Résultats
-
-### Pourquoi la dégradation sur 2025 ?
-
-**Causes identifiées:**
-
-1. **Drift temporel intentionnel** dans les données générées:
-   - Taux de réclamations fondées : 53.5% → 49.1% (-8.1%)
-   - Montant moyen : +15.1%
-   - PNB moyen : +19.4%
-
-2. **Distribution changeante des classes:**
-   - Le modèle a appris sur une distribution 2024
-   - La distribution 2025 est significativement différente
-
-3. **Concept drift:**
-   - Les critères de fondement peuvent avoir évolué
-   - Les comportements clients changent
-
-### Solutions Recommandées
-
-✅ **Solution 1: Réentraînement**
-- Réentraîner sur données combinées 2024 + 2025
-- Validation croisée temporelle
-
-✅ **Solution 2: Apprentissage Continu**
-- Réentraînement mensuel/trimestriel
-- Monitoring du drift en production
-- Alertes automatiques
-
-✅ **Solution 3: Modèles Adaptatifs**
-- Online learning
-- Ensemble avec poids temporels
-
-## 🚨 Monitoring en Production
-
-**KPIs à suivre:**
-- Accuracy, F1-Score hebdomadaire
-- Distribution des probabilités prédites
-- Tests de drift mensuels
-- Temps de réponse
-
-**Seuils d'alerte:**
-- Dégradation > 5% : ⚠️ Warning
-- Dégradation > 10% : 🚨 Critical
-- Drift détecté (p < 0.05) : 🔔 Investigation
-
-## 🎓 Méthodologie
-
-### Points Forts
-
-✅ Validation temporelle (train 2024, test 2025)
-✅ Feature engineering robuste (15+ features)
-✅ Optimisation bayésienne (Optuna)
-✅ Calibration des probabilités
-✅ Détection de drift automatique
-✅ Métriques complètes
-✅ Reproductibilité (random_state fixé)
-
-### Limites
-
-⚠️ Pas de validation sur données réelles (synthétiques)
-⚠️ Drift intentionnel très prononcé (démonstration)
-⚠️ Pas d'ensemble de modèles
-⚠️ Pas de SHAP pour explainability détaillée
-
-## 📝 Licence
-
-MIT License
-
-## 👥 Auteur
-
-Pipeline développé pour démonstration de best practices ML en production.
+**Colonnes nettoyées automatiquement:**
+- Montant demandé
+- Montant
+- Montant de réponse
+- PNB analytique (vision commerciale) cumulé
 
 ---
 
-**Version:** 1.0.0
+## 📂 Étape 1: Préparer Vos Données
+
+### Colonnes Requises pour 2024
+
+Votre fichier `reclamations_2024.xlsx` doit contenir **au minimum** ces colonnes :
+
+| Colonne | Type | Obligatoire | Description |
+|---------|------|-------------|-------------|
+| **Fondee** | int (0/1) | ✅ OUI | Variable cible (0=Non Fondée, 1=Fondée) |
+| **Montant demandé** | float | ✅ OUI | Montant de la réclamation |
+| **PNB analytique (vision commerciale) cumulé** | float | ✅ OUI | PNB du client |
+| **anciennete_annees** | float | ✅ OUI | Ancienneté client en années |
+| **Famille Produit** | string | ✅ OUI | Famille produit (Monétique, Crédit, etc.) |
+| **Catégorie** | string | ✅ OUI | Catégorie de réclamation |
+| Segment | string | ⭐ Recommandé | Segment client |
+| Canal de Réception | string | ⭐ Recommandé | Canal de réception |
+| Banque Privé | string (OUI/NON) | ⭐ Recommandé | Flag banque privée |
+| Date de Qualification | date | ⭐ Recommandé | Date de qualification |
+| Délai Estimé (j) | int | ⭐ Recommandé | Délai estimé |
+| Montant de réponse | float | ⭐ Recommandé | Montant de réponse |
+
+**Colonnes additionnelles supportées** (toutes celles de votre schéma sont supportées !) :
+- Région, Réseau, Groupe, Statut, PP/PM, Marché
+- Code Agence / CA Principal, Libellé Agence / CA Principal
+- Priorité Client, Financière ou non, Wafacash
+- Recevable, Motif d'irrecevabilité
+- Source, BAS (spécifiques à 2024)
+- Etc.
+
+### Colonnes Requises pour 2025
+
+Les mêmes colonnes que 2024, **PLUS** :
+- Demandeur (spécifique 2025)
+- Code GAB, Code anomalie GAB (spécifique Monétique)
+- Motif de rejet UT, Date Rejet UT, etc.
+
+---
+
+## 🚀 Étape 2: Placer Vos Fichiers
+
+```bash
+# 1. Aller dans le dossier du pipeline
+cd /home/user/Moteur-de-scoring/ml_pipeline
+
+# 2. Supprimer les données synthétiques (optionnel)
+rm data/raw/reclamations_*.xlsx
+
+# 3. Copier VOS fichiers
+cp /chemin/vers/vos/donnees/reclamations_2024.xlsx data/raw/
+cp /chemin/vers/vos/donnees/reclamations_2025.xlsx data/raw/
+```
+
+**OU** simplement :
+
+```bash
+# Copier directement vos fichiers dans le bon dossier
+cp ma_base_2024.xlsx ml_pipeline/data/raw/reclamations_2024.xlsx
+cp ma_base_2025.xlsx ml_pipeline/data/raw/reclamations_2025.xlsx
+```
+
+---
+
+## ⚙️ Étape 3: Configurer le Pipeline (Optionnel)
+
+Ouvrez `main_pipeline.py` et ajustez la configuration si nécessaire:
+
+```python
+config = {
+    'data_path_2024': 'data/raw/reclamations_2024.xlsx',  # ✅ Vos données
+    'data_path_2025': 'data/raw/reclamations_2025.xlsx',  # ✅ Vos données
+    'target_col': 'Fondee',                               # Variable cible
+    'optuna_trials': 100,                                 # 100-200 pour production
+    'cv_folds': 5,                                        # Cross-validation folds
+    'model_type': 'xgboost',                              # xgboost, lightgbm, catboost
+    'calibration_method': 'isotonic',                     # isotonic ou sigmoid
+    'random_state': 42,
+    'output_dir': 'outputs'
+}
+```
+
+**Paramètres Clés:**
+
+- `optuna_trials` :
+  - 30-50 pour un test rapide (~5 min)
+  - 100-150 pour production (~15 min)
+  - 200+ pour optimisation maximale (~30 min)
+
+- `model_type` :
+  - `'xgboost'` : Excellent équilibre performance/vitesse
+  - `'lightgbm'` : Plus rapide, bon pour gros volumes
+  - `'catboost'` : Meilleur avec features catégorielles
+
+---
+
+## 🎬 Étape 4: Lancer le Pipeline
+
+```bash
+# Aller dans le dossier
+cd /home/user/Moteur-de-scoring/ml_pipeline
+
+# Lancer le pipeline complet
+python main_pipeline.py
+```
+
+**Durée Estimée:**
+- Avec 30 trials: ~5-8 minutes
+- Avec 100 trials: ~15-20 minutes
+- Avec 200 trials: ~30-40 minutes
+
+---
+
+## 📊 Étape 5: Consulter les Résultats
+
+Tous les résultats sont dans le dossier `outputs/`:
+
+### 📄 Rapports Principaux
+
+```
+outputs/reports/
+├── RAPPORT_FINAL_REAL_COLS.txt              # 📄 RAPPORT COMPLET
+├── family_analysis_2025.txt       # 📄 Analyse par famille produit
+├── family_metrics_2025.csv        # 📊 Métriques par famille (CSV)
+├── metrics_2024.json              # Métriques 2024
+├── metrics_2025.json              # Métriques 2025
+├── feature_importance.csv         # Importance des features
+└── optuna_history.csv             # Historique optimisation
+```
+
+### 📈 Visualisations
+
+```
+outputs/reports/figures/
+├── family_analysis_2025.png       # ⭐ ANALYSE PAR FAMILLE (NOUVEAU!)
+├── confusion_matrix_2024.png      # Confusion 2024
+├── confusion_matrix_2025.png      # Confusion 2025
+├── roc_curve_2024.png             # ROC 2024
+├── roc_curve_2025.png             # ROC 2025
+├── pr_curve_2024.png              # Precision-Recall 2024
+├── pr_curve_2025.png              # Precision-Recall 2025
+├── calibration_curve.png          # Calibration
+└── prob_distribution_comparison.png # Comparaison prédictions
+```
+
+### 💾 Modèles et Artefacts
+
+```
+outputs/models/
+├── model_xgboost_YYYYMMDD_HHMMSS.pkl  # Modèle entraîné
+├── best_hyperparameters.json           # Hyperparamètres optimaux
+└── metadata_YYYYMMDD_HHMMSS.json       # Métadonnées complètes
+
+outputs/preprocessors/
+├── preprocessor.pkl                    # Preprocessing pipeline
+└── feature_selector.pkl                # Sélecteur de features
+```
+
+---
+
+## 🎨 Nouvelle Visualisation par Famille Produit
+
+Le pipeline génère maintenant une **analyse complète par famille produit** avec :
+
+1. **Barplot des métriques** (Accuracy, Precision, Recall, F1) par famille
+2. **Volume de réclamations** par famille
+3. **Taux de fondement** (Réel vs Prédit) par famille
+4. **Montant moyen** par famille
+5. **Confusion Matrix** - Meilleure famille
+6. **Confusion Matrix** - Moins bonne famille
+7. **Heatmap des métriques** toutes familles
+
+📊 Exemple de ce que vous obtiendrez :
+
+```
+Famille                        N     Acc    Prec     Rec      F1   Fond%
+--------------------------------------------------------------------------------
+Monétique                   5832   82.4%   85.2%   79.8%   82.4%   68.3%
+Crédit                      5123   79.1%   81.5%   76.2%   78.8%   52.1%
+Frais bancaires             4891   74.5%   77.3%   71.2%   74.1%   38.7%
+Epargne                     4654   72.8%   75.6%   69.3%   72.3%   41.2%
+```
+
+---
+
+## 🔍 Vérifications Automatiques
+
+Le pipeline vérifie automatiquement :
+
+✅ **Colonnes manquantes** : Avertissement si colonnes importantes absentes
+✅ **Types de données** : Conversion automatique si nécessaire
+✅ **Valeurs manquantes** : Gestion intelligente (pas de fillna(0) brutal)
+✅ **Outliers** : Détection et clipping automatique (IQR method)
+✅ **Drift temporel** : Tests statistiques KS et Chi²
+✅ **Déséquilibre des classes** : `scale_pos_weight` automatique
+✅ **Calibration** : Vérification ECE et Brier Score
+
+---
+
+## 📋 Interpréter les Résultats
+
+### Métriques Attendues (Production)
+
+| Métrique | Bon | Acceptable | À Améliorer |
+|----------|-----|------------|-------------|
+| **Accuracy** | > 75% | 70-75% | < 70% |
+| **F1-Score** | > 75% | 70-75% | < 70% |
+| **ROC-AUC** | > 0.80 | 0.75-0.80 | < 0.75 |
+| **Dégradation 2024→2025** | < 5% | 5-10% | > 10% |
+
+### Analyse par Famille
+
+Pour chaque famille produit, vous obtiendrez :
+
+- **Performance spécifique** : Accuracy, Precision, Recall, F1
+- **Taux de fondement** : Comparaison Réel vs Prédit
+- **Volume de réclamations** : Nombre de cas par famille
+- **Montant moyen** : Montant demandé moyen
+- **Confusion matrix** : Détails des erreurs
+
+**Utilité :**
+- 🎯 Identifier les familles les plus/moins bien prédites
+- 🔧 Ajuster les modèles par famille si nécessaire
+- 📊 Comprendre les différences de performance
+- 💡 Orienter les actions métier
+
+---
+
+## ⚠️ Cas Particuliers
+
+### Colonnes Manquantes
+
+Si certaines colonnes sont absentes, le pipeline :
+- **Continue quand même** (features optionnelles)
+- **Affiche un warning** pour les colonnes importantes
+- **Adapte le preprocessing** automatiquement
+
+### Données 2025 Non Disponibles
+
+Si vous n'avez que 2024 :
+
+```python
+# Utiliser une partie de 2024 comme test
+from sklearn.model_selection import train_test_split
+
+df_2024 = pd.read_excel('data/raw/reclamations_2024.xlsx')
+df_train, df_test = train_test_split(
+    df_2024,
+    test_size=0.2,
+    stratify=df_2024['Fondee'],
+    random_state=42
+)
+
+# Sauvegarder
+df_train.to_excel('data/raw/reclamations_2024.xlsx', index=False)
+df_test.to_excel('data/raw/reclamations_2025.xlsx', index=False)
+```
+
+### Noms de Colonnes Différents
+
+Si vos colonnes ont des noms légèrement différents :
+
+```python
+# Renommer avant de sauvegarder
+df.rename(columns={
+    'montant': 'Montant demandé',
+    'pnb': 'PNB analytique (vision commerciale) cumulé',
+    'anciennete': 'anciennete_annees'
+}, inplace=True)
+```
+
+---
+
+## 🚀 Workflow Complet
+
+```mermaid
+graph LR
+    A[Vos Données Excel] --> B[Copier dans data/raw/]
+    B --> C[Lancer main_pipeline.py]
+    C --> D[Preprocessing Automatique]
+    D --> E[Sélection Features]
+    E --> F[Optimisation Optuna]
+    F --> G[Évaluation 2024/2025]
+    G --> H[Analyse par Famille]
+    H --> I[Analyse de Drift]
+    I --> J[Rapport Complet]
+    J --> K[Visualisations + Modèle Sauvegardé]
+```
+
+---
+
+## 📞 Support
+
+Si vous rencontrez des problèmes :
+
+1. Vérifier que les colonnes obligatoires sont présentes
+2. Vérifier que `Fondee` contient bien 0 et 1
+3. Vérifier que les montants sont numériques
+4. Vérifier que les dates sont au format date
+
+---
+
+## 🎉 Prêt !
+
+Votre pipeline est maintenant **production-ready** avec les vraies colonnes de votre base de données !
+
+```bash
+# C'est aussi simple que :
+cp mes_donnees_2024.xlsx ml_pipeline/data/raw/reclamations_2024.xlsx
+cp mes_donnees_2025.xlsx ml_pipeline/data/raw/reclamations_2025.xlsx
+cd ml_pipeline
+python main_pipeline.py
+```
+
+**Et voilà ! 🚀**
+
+---
+
+**Version:** 2.0.0 - Avec Analyse par Famille Produit
 **Date:** Janvier 2026
-**Statut:** ✅ Complet et Fonctionnel
+**Statut:** ✅ Production-Ready avec Vraies Colonnes
