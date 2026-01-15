@@ -332,6 +332,15 @@ class MLPipeline:
         self.y_pred_2025 = y_pred_2025
         self.y_prob_2025 = y_prob_2025
 
+        # Sauvegarder prédictions pour visualisation externe
+        predictions_path = f"{self.config['output_dir']}/models/predictions_2025.pkl"
+        joblib.dump({
+            'y_true': self.y_test_2025,
+            'y_pred': y_pred_2025,
+            'y_prob': y_prob_2025
+        }, predictions_path)
+        print(f"✅ Prédictions sauvegardées: {predictions_path}")
+
         return self
 
     def analyze_by_family(self):

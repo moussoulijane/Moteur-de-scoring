@@ -239,6 +239,33 @@ class RobustPreprocessor:
         self.scaler = RobustScaler()
         self.categorical_cols = []
         self.numerical_cols = []
+        self.fill_values = {}  # Pour stocker les valeurs de remplissage
+
+    def _clean_numeric_data(self, X, fit_mode=True):
+        """Nettoie les NaN et inf dans les colonnes numériques
+
+        Args:
+            X: DataFrame à nettoyer
+            fit_mode: Si True, calcule et stocke les valeurs de remplissage.
+                     Si False, utilise les valeurs déjà calculées.
+        """
+        numeric_cols = X.select_dtypes(include=[np.number]).columns
+
+        for col in numeric_cols:
+            # Remplacer inf et -inf par NaN d'abord
+            X[col] = X[col].replace([np.inf, -np.inf], np.nan)
+
+            # En mode fit, calculer et stocker les valeurs de remplissage
+            if fit_mode and col not in self.fill_values:
+                median_val = X[col].median()
+                # Si la médiane est aussi NaN, utiliser 0
+                self.fill_values[col] = median_val if not pd.isna(median_val) else 0.0
+
+            # Remplir les NaN avec la valeur de remplissage (médiane ou 0)
+            fill_val = self.fill_values.get(col, 0.0)
+            X[col] = X[col].fillna(fill_val)
+
+        return X
 
     def fit(self, df):
         """Fit tous les transformers"""
@@ -252,9 +279,17 @@ class RobustPreprocessor:
         amount_cols = [col for col in amount_cols if col in X.columns]
         X = clean_amount_columns(X, amount_cols)
 
+        # 0b. Nettoyage initial des NaN/inf après parsing des montants
+        print("🔧 Nettoyage des valeurs NaN/inf après parsing...")
+        X = self._clean_numeric_data(X)
+
         # 1. Feature Engineering
         print("⚙️  Feature Engineering...")
         X = self.feature_engineer.fit_transform(X, y)
+
+        # 1b. Nettoyage après feature engineering (ratios peuvent créer inf)
+        print("🔧 Nettoyage des valeurs NaN/inf après feature engineering...")
+        X = self._clean_numeric_data(X)
 
         # Identifier colonnes catégorielles et numériques
         self.categorical_cols = [
@@ -317,8 +352,14 @@ class RobustPreprocessor:
         amount_cols = [col for col in amount_cols if col in X.columns]
         X = clean_amount_columns(X, amount_cols)
 
+        # 0b. Nettoyage initial des NaN/inf (utilise valeurs déjà apprises)
+        X = self._clean_numeric_data(X, fit_mode=False)
+
         # 1. Feature Engineering
         X = self.feature_engineer.transform(X)
+
+        # 1b. Nettoyage après feature engineering (utilise valeurs déjà apprises)
+        X = self._clean_numeric_data(X, fit_mode=False)
 
         # 2. Target Encoding
         if self.target_encoder:
@@ -327,6 +368,9 @@ class RobustPreprocessor:
         # 3. Outliers
         if self.outlier_handler:
             X = self.outlier_handler.transform(X)
+
+        # 3b. Nettoyage final avant standardisation (utilise valeurs déjà apprises)
+        X = self._clean_numeric_data(X, fit_mode=False)
 
         # 4. Standardisation
         cols_to_scale = [col for col in self.numerical_cols if col in X.columns]
