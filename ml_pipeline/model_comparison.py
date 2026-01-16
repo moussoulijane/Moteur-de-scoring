@@ -879,6 +879,9 @@ class ModelComparison:
         self.generate_comparison_chart()
         self.generate_report()
 
+        # Sauvegarder les prédictions pour analyze_results.py
+        self.save_predictions()
+
         # Analyse par famille pour le meilleur modèle
         self.analyze_by_family()
 
@@ -892,6 +895,35 @@ class ModelComparison:
         print(f"\n🏆 MEILLEUR MODÈLE: {best_model}")
         print(f"   Gain NET: {self.results[best_model]['gain_net']:,.0f} DH")
         print(f"   F1-Score: {self.results[best_model]['f1']:.4f}")
+
+    def save_predictions(self):
+        """Sauvegarder les prédictions pour une réutilisation ultérieure"""
+        print("\n💾 Sauvegarde des prédictions...")
+
+        output_dir = Path('outputs/production/predictions')
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Sauvegarder les prédictions de tous les modèles
+        predictions_data = {}
+
+        for model_name in self.results.keys():
+            predictions_data[model_name] = {
+                'y_pred': self.results[model_name]['y_pred'],
+                'y_prob': self.results[model_name]['y_prob'],
+                'threshold_low': self.results[model_name]['threshold_low'],
+                'threshold_high': self.results[model_name]['threshold_high']
+            }
+
+        # Sauvegarder y_true (commun à tous)
+        predictions_data['y_true'] = self.y_test
+
+        # Sauvegarder avec joblib
+        predictions_path = output_dir / 'predictions_2025.pkl'
+        joblib.dump(predictions_data, predictions_path)
+
+        print(f"✅ Prédictions sauvegardées: {predictions_path}")
+        print(f"   Modèles: {', '.join(self.results.keys())}")
+        print(f"   Fichier utilisable par: analyze_results.py")
 
     def analyze_by_family(self):
         """Analyse détaillée par famille de produit pour le meilleur modèle"""

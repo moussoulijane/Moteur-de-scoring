@@ -33,34 +33,57 @@ def load_results():
     df_2025 = pd.read_excel('data/raw/reclamations_2025.xlsx')
     print(f"✅ Données 2025: {len(df_2025)} réclamations")
 
-    # Pour l'instant, simuler les prédictions des 3 modèles
-    # Dans la vraie utilisation, vous chargerez les prédictions depuis model_comparison.py
-    # Exemple: results = joblib.load('outputs/production/models/comparison_results.pkl')
+    # Essayer de charger les vraies prédictions depuis model_comparison.py
+    predictions_path = Path('outputs/production/predictions/predictions_2025.pkl')
 
-    np.random.seed(42)
-    y_true = df_2025['Fondee'].values
+    if predictions_path.exists():
+        print(f"✅ Chargement des prédictions depuis: {predictions_path}")
 
-    # Simuler 3 modèles avec des performances légèrement différentes
-    models_results = {}
+        predictions_data = joblib.load(predictions_path)
 
-    for model_name in ['XGBoost', 'RandomForest', 'CatBoost']:
-        y_pred = y_true.copy()
-        # Créer des erreurs aléatoires (1-2%)
-        error_rate = 0.01 if model_name == 'XGBoost' else 0.015 if model_name == 'RandomForest' else 0.012
-        errors = np.random.choice(len(y_true), size=int(len(y_true) * error_rate), replace=False)
-        y_pred[errors] = 1 - y_pred[errors]
+        y_true = predictions_data['y_true']
+        models_results = {}
 
-        # Générer des probabilités
-        y_prob = np.random.uniform(0, 1, len(y_true))
-        y_prob[y_true == 1] = np.random.uniform(0.7, 0.99, (y_true == 1).sum())
-        y_prob[y_true == 0] = np.random.uniform(0.01, 0.3, (y_true == 0).sum())
+        for model_name in ['XGBoost', 'RandomForest', 'CatBoost']:
+            if model_name in predictions_data:
+                models_results[model_name] = {
+                    'y_pred': predictions_data[model_name]['y_pred'],
+                    'y_prob': predictions_data[model_name]['y_prob']
+                }
+                print(f"   ✓ {model_name}")
 
-        models_results[model_name] = {
-            'y_pred': y_pred,
-            'y_prob': y_prob
-        }
+        print(f"✅ Prédictions chargées pour {len(models_results)} modèles")
 
-    print(f"✅ Prédictions chargées pour {len(models_results)} modèles")
+    else:
+        print("⚠️  Fichier de prédictions non trouvé!")
+        print("   Simulation de prédictions pour démonstration...")
+        print(f"   Pour utiliser les vraies prédictions, exécutez d'abord:")
+        print(f"   python model_comparison.py")
+
+        np.random.seed(42)
+        y_true = df_2025['Fondee'].values
+
+        # Simuler 3 modèles avec des performances légèrement différentes
+        models_results = {}
+
+        for model_name in ['XGBoost', 'RandomForest', 'CatBoost']:
+            y_pred = y_true.copy()
+            # Créer des erreurs aléatoires (1-2%)
+            error_rate = 0.01 if model_name == 'XGBoost' else 0.015 if model_name == 'RandomForest' else 0.012
+            errors = np.random.choice(len(y_true), size=int(len(y_true) * error_rate), replace=False)
+            y_pred[errors] = 1 - y_pred[errors]
+
+            # Générer des probabilités
+            y_prob = np.random.uniform(0, 1, len(y_true))
+            y_prob[y_true == 1] = np.random.uniform(0.7, 0.99, (y_true == 1).sum())
+            y_prob[y_true == 0] = np.random.uniform(0.01, 0.3, (y_true == 0).sum())
+
+            models_results[model_name] = {
+                'y_pred': y_pred,
+                'y_prob': y_prob
+            }
+
+        print(f"✅ Prédictions simulées pour {len(models_results)} modèles")
 
     return df_2025, y_true, models_results
 
