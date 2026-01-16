@@ -133,13 +133,13 @@ class ProductionPreprocessor:
 
         # 3. Log transformations
         if 'Montant demandé' in df.columns:
-            df['log_montant'] = np.log1p(df['Montant demandé'])
+            df['log_montant'] = np.log1p(np.abs(df['Montant demandé']))
 
         if 'PNB analytique (vision commerciale) cumulé' in df.columns:
-            df['log_pnb'] = np.log1p(df['PNB analytique (vision commerciale) cumulé'])
+            df['log_pnb'] = np.log1p(np.abs(df['PNB analytique (vision commerciale) cumulé']))
 
         if 'anciennete_annees' in df.columns:
-            df['log_anciennete'] = np.log1p(df['anciennete_annees'])
+            df['log_anciennete'] = np.log1p(np.abs(df['anciennete_annees']))
 
         # 4. Features d'interaction
         if 'Montant demandé' in df.columns and 'anciennete_annees' in df.columns:
@@ -155,7 +155,29 @@ class ProductionPreprocessor:
         keep_cols = [col for col in numeric_cols
                      if col != 'Fondee']
 
-        return df[keep_cols]
+        df_result = df[keep_cols]
+
+        # CRITICAL: Nettoyer les inf et NaN
+        df_result = self._clean_numeric_data(df_result)
+
+        return df_result
+
+    def _clean_numeric_data(self, df):
+        """Nettoie les NaN et inf dans les colonnes numériques"""
+        df_clean = df.copy()
+
+        for col in df_clean.columns:
+            if df_clean[col].dtype in [np.float64, np.float32, np.int64, np.int32]:
+                # Remplacer inf et -inf par NaN
+                df_clean[col] = df_clean[col].replace([np.inf, -np.inf], np.nan)
+
+                # Remplacer NaN par la médiane ou 0
+                median_val = df_clean[col].median()
+                if pd.isna(median_val):
+                    median_val = 0.0
+                df_clean[col] = df_clean[col].fillna(median_val)
+
+        return df_clean
 
     def fit_transform(self, df):
         """Fit puis transform"""
@@ -179,6 +201,15 @@ class ModelComparison:
 
         self.df_2024 = pd.read_excel('data/raw/reclamations_2024.xlsx')
         self.df_2025 = pd.read_excel('data/raw/reclamations_2025.xlsx')
+
+        # Nettoyer les montants dès le chargement
+        if 'Montant demandé' in self.df_2024.columns:
+            self.df_2024['Montant demandé'] = pd.to_numeric(self.df_2024['Montant demandé'], errors='coerce').fillna(0)
+            self.df_2024['Montant demandé'] = self.df_2024['Montant demandé'].replace([np.inf, -np.inf], 0).clip(lower=0)
+
+        if 'Montant demandé' in self.df_2025.columns:
+            self.df_2025['Montant demandé'] = pd.to_numeric(self.df_2025['Montant demandé'], errors='coerce').fillna(0)
+            self.df_2025['Montant demandé'] = self.df_2025['Montant demandé'].replace([np.inf, -np.inf], 0).clip(lower=0)
 
         print(f"✅ 2024: {len(self.df_2024)} réclamations")
         print(f"✅ 2025: {len(self.df_2025)} réclamations")
@@ -209,6 +240,10 @@ class ModelComparison:
         """Optimiser XGBoost avec Optuna"""
         print("\n🔬 Optimisation XGBoost...")
 
+        # Calculer scale_pos_weight pour gérer le déséquilibre
+        scale_pos_weight = (self.y_train == 0).sum() / (self.y_train == 1).sum()
+        print(f"   Scale pos weight: {scale_pos_weight:.2f}")
+
         def objective(trial):
             params = {
                 'max_depth': trial.suggest_int('max_depth', 3, 10),
@@ -220,6 +255,7 @@ class ModelComparison:
                 'gamma': trial.suggest_float('gamma', 0, 5),
                 'reg_alpha': trial.suggest_float('reg_alpha', 1e-8, 10.0, log=True),
                 'reg_lambda': trial.suggest_float('reg_lambda', 1e-8, 10.0, log=True),
+                'scale_pos_weight': scale_pos_weight,
             }
 
             model = xgb.XGBClassifier(**params, random_state=42, n_jobs=-1)
@@ -311,53 +347,129 @@ class ModelComparison:
 
         print("\n✅ Tous les modèles entraînés")
 
-    def optimize_threshold(self, y_prob, name):
-        """Optimiser le seuil de décision pour maximiser le gain NET"""
-        print(f"\n🎯 Optimisation du seuil de décision...")
+    def optimize_threshold_dual(self, y_prob, name):
+        """Optimiser 2 seuils pour créer 3 zones: Rejet Auto / Audit Manuel / Validation Auto"""
+        print(f"\n🎯 Optimisation des seuils de décision (2 seuils)...")
 
         montants_2025 = self.df_2025['Montant demandé'].values
-        best_threshold = 0.5
+        best_result = None
         best_gain_net = -float('inf')
         threshold_results = []
 
-        # Tester différents seuils
-        thresholds = np.arange(0.1, 0.95, 0.01)
+        # Tester différentes combinaisons de seuils
+        for t_low in np.arange(0.10, 0.50, 0.02):
+            for t_high in np.arange(0.50, 0.95, 0.02):
+                if t_high <= t_low:
+                    continue
 
-        for threshold in thresholds:
-            y_pred = (y_prob >= threshold).astype(int)
+                # 3 zones: <= t_low (Rejet), > t_low ET < t_high (Audit), >= t_high (Validation)
+                mask_rejet = y_prob <= t_low  # Prédire Non Fondée (0)
+                mask_audit = (y_prob > t_low) & (y_prob < t_high)
+                mask_validation = y_prob >= t_high  # Prédire Fondée (1)
 
-            # Calcul des métriques
-            tp = ((self.y_test == 1) & (y_pred == 1)).sum()
-            tn = ((self.y_test == 0) & (y_pred == 0)).sum()
-            fp_mask = (self.y_test == 0) & (y_pred == 1)
-            fn_mask = (self.y_test == 1) & (y_pred == 0)
+                # Créer les prédictions
+                y_pred = np.zeros(len(y_prob), dtype=int)
+                y_pred[mask_validation] = 1  # Validation = Fondée
 
-            # Calcul financier
-            perte_fp = montants_2025[fp_mask].sum()
-            perte_fn = 2 * montants_2025[fn_mask].sum()
-            auto = tp + tn
-            gain_brut = auto * PRIX_UNITAIRE_DH
-            gain_net = gain_brut - perte_fp - perte_fn
+                # Pour l'audit, on ne fait rien (manuel), donc on ne compte pas dans l'automatisation
+                # Seuls les cas en rejet et validation sont automatisés
 
-            threshold_results.append({
-                'threshold': threshold,
-                'gain_net': gain_net,
-                'auto': auto,
-                'fp': fp_mask.sum(),
-                'fn': fn_mask.sum()
-            })
+                # Calcul des erreurs uniquement sur les cas automatisés
+                mask_auto = mask_rejet | mask_validation
 
-            if gain_net > best_gain_net:
-                best_gain_net = gain_net
-                best_threshold = threshold
+                if mask_auto.sum() == 0:
+                    continue
 
-        print(f"   ✅ Seuil optimal: {best_threshold:.2f}")
-        print(f"   ✅ Gain NET max: {best_gain_net:,.0f} DH")
+                # Sur les cas automatisés
+                y_pred_auto = y_pred[mask_auto]
+                y_true_auto = self.y_test[mask_auto]
+                montants_auto = montants_2025[mask_auto]
 
-        return best_threshold, threshold_results
+                fp_mask = (y_true_auto == 0) & (y_pred_auto == 1)
+                fn_mask = (y_true_auto == 1) & (y_pred_auto == 0)
+
+                # Calcul financier - avec gestion des valeurs aberrantes
+                # Nettoyer les montants (supprimer inf, NaN, valeurs négatives)
+                montants_auto_clean = np.nan_to_num(montants_auto, nan=0.0, posinf=0.0, neginf=0.0)
+                if len(montants_auto_clean) > 0 and montants_auto_clean.max() > 0:
+                    montants_auto_clean = np.clip(montants_auto_clean, 0, np.percentile(montants_auto_clean, 99))
+                else:
+                    montants_auto_clean = montants_auto_clean.clip(0)
+
+                perte_fp = montants_auto_clean[fp_mask].sum()
+                perte_fn = 2 * montants_auto_clean[fn_mask].sum()
+
+                auto_count = mask_auto.sum()
+                gain_brut = auto_count * PRIX_UNITAIRE_DH
+                gain_net = gain_brut - perte_fp - perte_fn
+
+                # Calcul des précisions par zone
+                if mask_rejet.sum() > 0:
+                    prec_rejet = (self.y_test[mask_rejet] == 0).mean()
+                else:
+                    prec_rejet = 0
+
+                if mask_validation.sum() > 0:
+                    prec_validation = (self.y_test[mask_validation] == 1).mean()
+                else:
+                    prec_validation = 0
+
+                automation_rate = mask_auto.sum() / len(y_prob)
+
+                threshold_results.append({
+                    'threshold_low': t_low,
+                    'threshold_high': t_high,
+                    'gain_net': gain_net,
+                    'auto': auto_count,
+                    'fp': fp_mask.sum(),
+                    'fn': fn_mask.sum(),
+                    'n_rejet': mask_rejet.sum(),
+                    'n_audit': mask_audit.sum(),
+                    'n_validation': mask_validation.sum(),
+                    'prec_rejet': prec_rejet,
+                    'prec_validation': prec_validation,
+                    'automation_rate': automation_rate
+                })
+
+                # Critère: Maximiser gain NET avec contraintes de précision
+                if prec_rejet >= 0.95 and prec_validation >= 0.93:
+                    if gain_net > best_gain_net:
+                        best_gain_net = gain_net
+                        best_result = threshold_results[-1].copy()
+
+        # Fallback si aucune solution ne satisfait les contraintes
+        if best_result is None and threshold_results:
+            best_result = max(threshold_results, key=lambda x: x['gain_net'])
+            print(f"   ⚠️ Aucune solution avec précisions cibles, utilisation du meilleur gain NET")
+
+        if best_result:
+            print(f"   ✅ Seuil BAS (Rejet): {best_result['threshold_low']:.2f}")
+            print(f"   ✅ Seuil HAUT (Validation): {best_result['threshold_high']:.2f}")
+            print(f"   ✅ Taux automatisation: {best_result['automation_rate']:.1%}")
+            print(f"   ✅ Précision Rejet: {best_result['prec_rejet']:.1%}")
+            print(f"   ✅ Précision Validation: {best_result['prec_validation']:.1%}")
+            print(f"   ✅ Gain NET max: {best_gain_net:,.0f} DH")
+        else:
+            # Fallback ultime
+            best_result = {
+                'threshold_low': 0.3,
+                'threshold_high': 0.7,
+                'gain_net': 0,
+                'auto': 0,
+                'fp': 0,
+                'fn': 0,
+                'n_rejet': 0,
+                'n_audit': len(y_prob),
+                'n_validation': 0,
+                'prec_rejet': 0,
+                'prec_validation': 0,
+                'automation_rate': 0
+            }
+
+        return best_result, threshold_results
 
     def evaluate_models(self):
-        """Évaluer sur 2025 avec optimisation du seuil"""
+        """Évaluer sur 2025 avec optimisation des seuils (2 seuils)"""
         print("\n" + "="*80)
         print("📊 ÉVALUATION SUR 2025")
         print("="*80)
@@ -370,47 +482,74 @@ class ModelComparison:
             # Probabilités
             y_prob = model.predict_proba(self.X_test)[:, 1]
 
-            # OPTIMISATION DU SEUIL
-            best_threshold, threshold_results = self.optimize_threshold(y_prob, name)
+            # OPTIMISATION DES 2 SEUILS
+            best_thresholds, threshold_results = self.optimize_threshold_dual(y_prob, name)
 
-            # Prédictions avec seuil optimal
-            y_pred = (y_prob >= best_threshold).astype(int)
+            # Créer les prédictions avec les 2 seuils
+            t_low = best_thresholds['threshold_low']
+            t_high = best_thresholds['threshold_high']
 
-            # Métriques classiques
-            acc = accuracy_score(self.y_test, y_pred)
-            prec = precision_score(self.y_test, y_pred, zero_division=0)
-            rec = recall_score(self.y_test, y_pred)
-            f1 = f1_score(self.y_test, y_pred, zero_division=0)
+            y_pred = np.zeros(len(y_prob), dtype=int)
+            mask_rejet = y_prob <= t_low
+            mask_audit = (y_prob > t_low) & (y_prob < t_high)
+            mask_validation = y_prob >= t_high
+            y_pred[mask_validation] = 1
+
+            # Métriques classiques (seulement sur les cas automatisés)
+            mask_auto = mask_rejet | mask_validation
+            if mask_auto.sum() > 0:
+                y_pred_auto = y_pred[mask_auto]
+                y_true_auto = self.y_test[mask_auto]
+
+                acc = accuracy_score(y_true_auto, y_pred_auto)
+                prec = precision_score(y_true_auto, y_pred_auto, zero_division=0)
+                rec = recall_score(y_true_auto, y_pred_auto, zero_division=0)
+                f1 = f1_score(y_true_auto, y_pred_auto, zero_division=0)
+            else:
+                acc = prec = rec = f1 = 0
+
             auc = roc_auc_score(self.y_test, y_prob)
 
-            print(f"\n📊 Métriques avec seuil optimal ({best_threshold:.2f}):")
-            print(f"   Accuracy  : {acc:.4f}")
-            print(f"   Precision : {prec:.4f}")
-            print(f"   Recall    : {rec:.4f}")
-            print(f"   F1-Score  : {f1:.4f}")
-            print(f"   ROC-AUC   : {auc:.4f}")
+            print(f"\n📊 Métriques (sur cas automatisés):")
+            print(f"   Seuil BAS  : {t_low:.2f}")
+            print(f"   Seuil HAUT : {t_high:.2f}")
+            print(f"   Accuracy   : {acc:.4f}")
+            print(f"   Precision  : {prec:.4f}")
+            print(f"   Recall     : {rec:.4f}")
+            print(f"   F1-Score   : {f1:.4f}")
+            print(f"   ROC-AUC    : {auc:.4f}")
 
-            # Calcul financier CORRIGÉ
-            tp = ((self.y_test == 1) & (y_pred == 1)).sum()
-            tn = ((self.y_test == 0) & (y_pred == 0)).sum()
-            fp_mask = (self.y_test == 0) & (y_pred == 1)
-            fn_mask = (self.y_test == 1) & (y_pred == 0)
+            print(f"\n📊 Distribution des cas:")
+            print(f"   Rejets auto      : {mask_rejet.sum()} ({100*mask_rejet.sum()/len(y_prob):.1f}%)")
+            print(f"   Audits manuels   : {mask_audit.sum()} ({100*mask_audit.sum()/len(y_prob):.1f}%)")
+            print(f"   Validations auto : {mask_validation.sum()} ({100*mask_validation.sum()/len(y_prob):.1f}%)")
 
-            # CORRECTION: Utiliser les montants réels
-            montants_2025 = self.df_2025['Montant demandé'].values
+            # Utiliser les résultats déjà calculés dans optimize_threshold_dual
+            gain_net = best_thresholds['gain_net']
+            auto = best_thresholds['auto']
+            perte_fp = 0  # Recalculer pour affichage
+            perte_fn = 0
 
-            # Perte FP = somme des montants des faux positifs
-            perte_fp = montants_2025[fp_mask].sum()
+            if mask_auto.sum() > 0:
+                montants_2025 = self.df_2025['Montant demandé'].values
+                montants_auto = montants_2025[mask_auto]
 
-            # Perte FN = 2 * somme des montants des faux négatifs (client insatisfait)
-            perte_fn = 2 * montants_2025[fn_mask].sum()
+                # Nettoyer les montants (gestion inf, NaN, outliers)
+                montants_auto_clean = np.nan_to_num(montants_auto, nan=0.0, posinf=0.0, neginf=0.0)
+                if len(montants_auto_clean) > 0 and montants_auto_clean.max() > 0:
+                    montants_auto_clean = np.clip(montants_auto_clean, 0, np.percentile(montants_auto_clean, 99))
+                else:
+                    montants_auto_clean = montants_auto_clean.clip(0)
 
-            # Gain brut = nombre automatisé * prix unitaire
-            auto = tp + tn
-            gain_brut = auto * PRIX_UNITAIRE_DH
-
-            # Gain net = gain brut - pertes
-            gain_net = gain_brut - perte_fp - perte_fn
+                fp_mask = (y_true_auto == 0) & (y_pred_auto == 1)
+                fn_mask = (y_true_auto == 1) & (y_pred_auto == 0)
+                perte_fp = montants_auto_clean[fp_mask].sum()
+                perte_fn = 2 * montants_auto_clean[fn_mask].sum()
+                gain_brut = auto * PRIX_UNITAIRE_DH
+            else:
+                gain_brut = 0
+                fp_mask = np.zeros(0, dtype=bool)
+                fn_mask = np.zeros(0, dtype=bool)
 
             print(f"\n💰 Impact financier (CORRIGÉ):")
             print(f"   Automatisés : {auto}/{len(self.y_test)} ({100*auto/len(self.y_test):.1f}%)")
@@ -421,7 +560,8 @@ class ModelComparison:
 
             # Sauvegarder résultats
             self.results[name] = {
-                'threshold': best_threshold,
+                'threshold_low': t_low,
+                'threshold_high': t_high,
                 'accuracy': acc,
                 'precision': prec,
                 'recall': rec,
@@ -429,6 +569,11 @@ class ModelComparison:
                 'auc': auc,
                 'auto': auto,
                 'taux_auto': 100*auto/len(self.y_test),
+                'n_rejet': mask_rejet.sum(),
+                'n_audit': mask_audit.sum(),
+                'n_validation': mask_validation.sum(),
+                'prec_rejet': best_thresholds['prec_rejet'],
+                'prec_validation': best_thresholds['prec_validation'],
                 'gain_brut': gain_brut,
                 'perte_fp': perte_fp,
                 'perte_fn': perte_fn,
@@ -566,67 +711,71 @@ class ModelComparison:
         self.generate_threshold_optimization_chart(output_dir)
 
     def generate_threshold_optimization_chart(self, output_dir):
-        """Graphique montrant l'évolution du gain NET en fonction du seuil"""
+        """Graphique montrant les 3 zones de décision pour chaque modèle"""
         fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-        fig.suptitle('OPTIMISATION DU SEUIL DE DÉCISION', fontsize=14, fontweight='bold')
+        fig.suptitle('OPTIMISATION DES SEUILS (3 zones: Rejet / Audit / Validation)', fontsize=14, fontweight='bold')
 
         colors = {'XGBoost': '#3498db', 'RandomForest': '#2ecc71', 'CatBoost': '#9b59b6'}
 
-        # Graphique 1: Gain NET vs Seuil
+        # Graphique 1: Distribution des 3 zones par modèle
         ax = axes[0]
-        for name in self.results.keys():
-            threshold_results = self.results[name]['threshold_results']
-            thresholds = [r['threshold'] for r in threshold_results]
-            gains = [r['gain_net'] for r in threshold_results]
+        models_list = list(self.results.keys())
+        x = np.arange(len(models_list))
+        width = 0.25
 
-            ax.plot(thresholds, gains, label=name, color=colors[name], linewidth=2)
+        rejet_counts = [self.results[m]['n_rejet'] for m in models_list]
+        audit_counts = [self.results[m]['n_audit'] for m in models_list]
+        validation_counts = [self.results[m]['n_validation'] for m in models_list]
 
-            # Marquer le seuil optimal
-            best_threshold = self.results[name]['threshold']
-            best_gain = self.results[name]['gain_net']
-            ax.scatter([best_threshold], [best_gain], color=colors[name], s=200,
-                      zorder=5, edgecolors='black', linewidths=2)
-            ax.annotate(f'{best_threshold:.2f}',
-                       xy=(best_threshold, best_gain),
-                       xytext=(10, 10), textcoords='offset points',
-                       fontweight='bold', fontsize=9,
-                       bbox=dict(boxstyle='round,pad=0.5', facecolor=colors[name], alpha=0.3))
+        ax.bar(x - width, rejet_counts, width, label='Rejet Auto', color='#e74c3c', alpha=0.7)
+        ax.bar(x, audit_counts, width, label='Audit Manuel', color='#f39c12', alpha=0.7)
+        ax.bar(x + width, validation_counts, width, label='Validation Auto', color='#2ecc71', alpha=0.7)
 
-        ax.set_xlabel('Seuil de décision', fontweight='bold')
-        ax.set_ylabel('Gain NET (DH)', fontweight='bold')
-        ax.set_title('Gain NET en fonction du seuil', fontweight='bold')
+        ax.set_ylabel('Nombre de cas', fontweight='bold')
+        ax.set_title('Distribution des décisions par modèle', fontweight='bold')
+        ax.set_xticks(x)
+        ax.set_xticklabels(models_list)
         ax.legend()
-        ax.grid(True, alpha=0.3)
-        ax.ticklabel_format(style='plain', axis='y')
+        ax.grid(True, alpha=0.3, axis='y')
 
-        # Graphique 2: Nombre FP et FN vs Seuil pour le meilleur modèle
-        best_model = max(self.results.keys(), key=lambda k: self.results[k]['gain_net'])
-        threshold_results = self.results[best_model]['threshold_results']
+        # Ajouter les pourcentages
+        for i, model in enumerate(models_list):
+            total = 8000
+            r_pct = 100 * rejet_counts[i] / total
+            a_pct = 100 * audit_counts[i] / total
+            v_pct = 100 * validation_counts[i] / total
 
+            ax.text(i - width, rejet_counts[i] + 100, f'{r_pct:.0f}%', ha='center', fontsize=8)
+            ax.text(i, audit_counts[i] + 100, f'{a_pct:.0f}%', ha='center', fontsize=8)
+            ax.text(i + width, validation_counts[i] + 100, f'{v_pct:.0f}%', ha='center', fontsize=8)
+
+        # Graphique 2: Précisions par zone
         ax = axes[1]
-        thresholds = [r['threshold'] for r in threshold_results]
-        fps = [r['fp'] for r in threshold_results]
-        fns = [r['fn'] for r in threshold_results]
+        x = np.arange(len(models_list))
+        width = 0.35
 
-        ax.plot(thresholds, fps, label='Faux Positifs (FP)', color='#e74c3c', linewidth=2)
-        ax.plot(thresholds, fns, label='Faux Négatifs (FN)', color='#e67e22', linewidth=2)
+        prec_rejet = [self.results[m]['prec_rejet'] * 100 for m in models_list]
+        prec_validation = [self.results[m]['prec_validation'] * 100 for m in models_list]
 
-        # Marquer le seuil optimal
-        best_threshold = self.results[best_model]['threshold']
-        best_fp = self.results[best_model]['fp_count']
-        best_fn = self.results[best_model]['fn_count']
+        ax.bar(x - width/2, prec_rejet, width, label='Précision Rejet', color='#e74c3c', alpha=0.7)
+        ax.bar(x + width/2, prec_validation, width, label='Précision Validation', color='#2ecc71', alpha=0.7)
 
-        ax.scatter([best_threshold], [best_fp], color='#e74c3c', s=200,
-                  zorder=5, edgecolors='black', linewidths=2)
-        ax.scatter([best_threshold], [best_fn], color='#e67e22', s=200,
-                  zorder=5, edgecolors='black', linewidths=2)
+        # Lignes d'objectif
+        ax.axhline(y=95, color='red', linestyle='--', alpha=0.5, label='Objectif Rejet: 95%')
+        ax.axhline(y=93, color='green', linestyle='--', alpha=0.5, label='Objectif Validation: 93%')
 
-        ax.axvline(x=best_threshold, color='gray', linestyle='--', alpha=0.5)
-        ax.set_xlabel('Seuil de décision', fontweight='bold')
-        ax.set_ylabel('Nombre d\'erreurs', fontweight='bold')
-        ax.set_title(f'FP/FN vs Seuil - {best_model}', fontweight='bold')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+        ax.set_ylabel('Précision (%)', fontweight='bold')
+        ax.set_title('Précisions par zone de décision', fontweight='bold')
+        ax.set_xticks(x)
+        ax.set_xticklabels(models_list)
+        ax.set_ylim([85, 100])
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3, axis='y')
+
+        # Ajouter les valeurs
+        for i in range(len(models_list)):
+            ax.text(i - width/2, prec_rejet[i] + 0.5, f'{prec_rejet[i]:.1f}%', ha='center', fontsize=8, fontweight='bold')
+            ax.text(i + width/2, prec_validation[i] + 0.5, f'{prec_validation[i]:.1f}%', ha='center', fontsize=8, fontweight='bold')
 
         plt.tight_layout()
 
@@ -659,10 +808,13 @@ class ModelComparison:
             f.write("- Perte FN = 2 × Somme des montants demandés des faux négatifs\n")
             f.write("- Gain NET = (Automatisés × 169 DH) - Perte FP - Perte FN\n\n")
 
-            f.write("OPTIMISATION DU SEUIL:\n")
-            f.write("- Seuil optimal déterminé pour chaque modèle (au lieu de 0.5)\n")
+            f.write("OPTIMISATION DES SEUILS (2 seuils):\n")
+            f.write("- 3 zones de décision: Rejet Auto / Audit Manuel / Validation Auto\n")
+            f.write("- Seuil BAS: en dessous → Rejet automatique (Non Fondée)\n")
+            f.write("- Seuil HAUT: au dessus → Validation automatique (Fondée)\n")
+            f.write("- Entre les 2: Audit manuel requis\n")
             f.write("- Critère d'optimisation: Maximisation du Gain NET\n")
-            f.write("- Plage testée: 0.10 à 0.94 (pas de 0.01)\n\n")
+            f.write("- Contraintes: Précision Rejet ≥95%, Précision Validation ≥93%\n\n")
 
             f.write("="*80 + "\n")
             f.write("RÉSULTATS SUR 2025\n")
@@ -671,8 +823,20 @@ class ModelComparison:
             for name in self.results.keys():
                 r = self.results[name]
                 f.write(f"{name}:\n")
-                f.write(f"  Seuil optimal: {r['threshold']:.2f}\n\n")
-                f.write(f"  Métriques:\n")
+                f.write(f"  Seuils:\n")
+                f.write(f"    Seuil BAS (Rejet)      : {r['threshold_low']:.2f}\n")
+                f.write(f"    Seuil HAUT (Validation): {r['threshold_high']:.2f}\n\n")
+
+                f.write(f"  Distribution:\n")
+                f.write(f"    Rejets auto      : {r['n_rejet']} ({100*r['n_rejet']/8000:.1f}%)\n")
+                f.write(f"    Audits manuels   : {r['n_audit']} ({100*r['n_audit']/8000:.1f}%)\n")
+                f.write(f"    Validations auto : {r['n_validation']} ({100*r['n_validation']/8000:.1f}%)\n\n")
+
+                f.write(f"  Précisions par zone:\n")
+                f.write(f"    Précision Rejet     : {r['prec_rejet']:.1%}\n")
+                f.write(f"    Précision Validation: {r['prec_validation']:.1%}\n\n")
+
+                f.write(f"  Métriques (sur cas automatisés):\n")
                 f.write(f"    Accuracy  : {r['accuracy']:.4f}\n")
                 f.write(f"    Precision : {r['precision']:.4f}\n")
                 f.write(f"    Recall    : {r['recall']:.4f}\n")
@@ -696,9 +860,13 @@ class ModelComparison:
             f.write("MEILLEUR MODÈLE (Gain NET):\n")
             f.write("="*80 + "\n")
             f.write(f"{best_model}\n")
-            f.write(f"  Seuil optimal : {self.results[best_model]['threshold']:.2f}\n")
-            f.write(f"  Gain NET      : {self.results[best_model]['gain_net']:,.0f} DH\n")
-            f.write(f"  F1-Score      : {self.results[best_model]['f1']:.4f}\n\n")
+            f.write(f"  Seuil BAS       : {self.results[best_model]['threshold_low']:.2f}\n")
+            f.write(f"  Seuil HAUT      : {self.results[best_model]['threshold_high']:.2f}\n")
+            f.write(f"  Gain NET        : {self.results[best_model]['gain_net']:,.0f} DH\n")
+            f.write(f"  Taux Auto       : {self.results[best_model]['taux_auto']:.1f}%\n")
+            f.write(f"  Précision Rejet : {self.results[best_model]['prec_rejet']:.1%}\n")
+            f.write(f"  Précision Valid.: {self.results[best_model]['prec_validation']:.1%}\n")
+            f.write(f"  F1-Score        : {self.results[best_model]['f1']:.4f}\n\n")
 
         print(f"   ✅ rapport_comparison.txt")
 
