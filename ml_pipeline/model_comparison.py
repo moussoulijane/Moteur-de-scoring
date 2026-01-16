@@ -133,13 +133,13 @@ class ProductionPreprocessor:
 
         # 3. Log transformations
         if 'Montant demandé' in df.columns:
-            df['log_montant'] = np.log1p(df['Montant demandé'])
+            df['log_montant'] = np.log1p(np.abs(df['Montant demandé']))
 
         if 'PNB analytique (vision commerciale) cumulé' in df.columns:
-            df['log_pnb'] = np.log1p(df['PNB analytique (vision commerciale) cumulé'])
+            df['log_pnb'] = np.log1p(np.abs(df['PNB analytique (vision commerciale) cumulé']))
 
         if 'anciennete_annees' in df.columns:
-            df['log_anciennete'] = np.log1p(df['anciennete_annees'])
+            df['log_anciennete'] = np.log1p(np.abs(df['anciennete_annees']))
 
         # 4. Features d'interaction
         if 'Montant demandé' in df.columns and 'anciennete_annees' in df.columns:
@@ -155,7 +155,29 @@ class ProductionPreprocessor:
         keep_cols = [col for col in numeric_cols
                      if col != 'Fondee']
 
-        return df[keep_cols]
+        df_result = df[keep_cols]
+
+        # CRITICAL: Nettoyer les inf et NaN
+        df_result = self._clean_numeric_data(df_result)
+
+        return df_result
+
+    def _clean_numeric_data(self, df):
+        """Nettoie les NaN et inf dans les colonnes numériques"""
+        df_clean = df.copy()
+
+        for col in df_clean.columns:
+            if df_clean[col].dtype in [np.float64, np.float32, np.int64, np.int32]:
+                # Remplacer inf et -inf par NaN
+                df_clean[col] = df_clean[col].replace([np.inf, -np.inf], np.nan)
+
+                # Remplacer NaN par la médiane ou 0
+                median_val = df_clean[col].median()
+                if pd.isna(median_val):
+                    median_val = 0.0
+                df_clean[col] = df_clean[col].fillna(median_val)
+
+        return df_clean
 
     def fit_transform(self, df):
         """Fit puis transform"""
@@ -179,6 +201,15 @@ class ModelComparison:
 
         self.df_2024 = pd.read_excel('data/raw/reclamations_2024.xlsx')
         self.df_2025 = pd.read_excel('data/raw/reclamations_2025.xlsx')
+
+        # Nettoyer les montants dès le chargement
+        if 'Montant demandé' in self.df_2024.columns:
+            self.df_2024['Montant demandé'] = pd.to_numeric(self.df_2024['Montant demandé'], errors='coerce').fillna(0)
+            self.df_2024['Montant demandé'] = self.df_2024['Montant demandé'].replace([np.inf, -np.inf], 0).clip(lower=0)
+
+        if 'Montant demandé' in self.df_2025.columns:
+            self.df_2025['Montant demandé'] = pd.to_numeric(self.df_2025['Montant demandé'], errors='coerce').fillna(0)
+            self.df_2025['Montant demandé'] = self.df_2025['Montant demandé'].replace([np.inf, -np.inf], 0).clip(lower=0)
 
         print(f"✅ 2024: {len(self.df_2024)} réclamations")
         print(f"✅ 2025: {len(self.df_2025)} réclamations")
@@ -357,9 +388,16 @@ class ModelComparison:
                 fp_mask = (y_true_auto == 0) & (y_pred_auto == 1)
                 fn_mask = (y_true_auto == 1) & (y_pred_auto == 0)
 
-                # Calcul financier
-                perte_fp = montants_auto[fp_mask].sum()
-                perte_fn = 2 * montants_auto[fn_mask].sum()
+                # Calcul financier - avec gestion des valeurs aberrantes
+                # Nettoyer les montants (supprimer inf, NaN, valeurs négatives)
+                montants_auto_clean = np.nan_to_num(montants_auto, nan=0.0, posinf=0.0, neginf=0.0)
+                if len(montants_auto_clean) > 0 and montants_auto_clean.max() > 0:
+                    montants_auto_clean = np.clip(montants_auto_clean, 0, np.percentile(montants_auto_clean, 99))
+                else:
+                    montants_auto_clean = montants_auto_clean.clip(0)
+
+                perte_fp = montants_auto_clean[fp_mask].sum()
+                perte_fn = 2 * montants_auto_clean[fn_mask].sum()
 
                 auto_count = mask_auto.sum()
                 gain_brut = auto_count * PRIX_UNITAIRE_DH
@@ -495,10 +533,18 @@ class ModelComparison:
             if mask_auto.sum() > 0:
                 montants_2025 = self.df_2025['Montant demandé'].values
                 montants_auto = montants_2025[mask_auto]
+
+                # Nettoyer les montants (gestion inf, NaN, outliers)
+                montants_auto_clean = np.nan_to_num(montants_auto, nan=0.0, posinf=0.0, neginf=0.0)
+                if len(montants_auto_clean) > 0 and montants_auto_clean.max() > 0:
+                    montants_auto_clean = np.clip(montants_auto_clean, 0, np.percentile(montants_auto_clean, 99))
+                else:
+                    montants_auto_clean = montants_auto_clean.clip(0)
+
                 fp_mask = (y_true_auto == 0) & (y_pred_auto == 1)
                 fn_mask = (y_true_auto == 1) & (y_pred_auto == 0)
-                perte_fp = montants_auto[fp_mask].sum()
-                perte_fn = 2 * montants_auto[fn_mask].sum()
+                perte_fp = montants_auto_clean[fp_mask].sum()
+                perte_fn = 2 * montants_auto_clean[fn_mask].sum()
                 gain_brut = auto * PRIX_UNITAIRE_DH
             else:
                 gain_brut = 0
