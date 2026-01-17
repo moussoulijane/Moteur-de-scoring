@@ -595,57 +595,57 @@ def generate_family_accuracy_chart(df_results):
     """Générer le graphique d'accuracy par famille pour XGBoost"""
     print("\n📊 Génération du graphique d'accuracy par famille...")
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
-    fig.suptitle('ACCURACY PAR FAMILLE DE PRODUIT - XGBoost', fontsize=16, fontweight='bold')
-
     # Top 15 familles par volume
     df_top = df_results.head(15).copy()
     # Inverser l'ordre pour avoir le Top 1 en haut
     df_top = df_top.iloc[::-1].reset_index(drop=True)
 
-    # Graphique 1: Accuracy
+    # Créer la figure
+    fig, ax = plt.subplots(figsize=(14, 10))
+    fig.suptitle('ACCURACY PAR FAMILLE DE PRODUIT - XGBoost (Top 15)',
+                 fontsize=16, fontweight='bold', y=0.98)
+
+    # Couleurs selon performance
     colors = ['#27ae60' if acc >= 0.98 else '#f39c12' if acc >= 0.95 else '#e74c3c'
               for acc in df_top['Accuracy']]
 
+    # Histogramme horizontal
     y_pos = range(len(df_top))
-    bars = ax1.barh(y_pos, df_top['Accuracy'] * 100, color=colors, alpha=0.8, edgecolor='black', linewidth=1)
-    ax1.set_yticks(y_pos)
-    ax1.set_yticklabels(df_top['Famille'], fontsize=8)
-    ax1.set_xlabel('Accuracy (%)', fontweight='bold', fontsize=11)
-    ax1.set_title('Accuracy par Famille (Top 15)', fontweight='bold', fontsize=13)
-    ax1.grid(True, alpha=0.3, axis='x')
-    ax1.set_xlim([85, 100])
+    bars = ax.barh(y_pos, df_top['Accuracy'] * 100, color=colors, alpha=0.8,
+                   edgecolor='black', linewidth=1.5)
 
-    # Ajouter les valeurs
+    # Étiquettes
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(df_top['Famille'], fontsize=11)
+    ax.set_xlabel('Accuracy (%)', fontweight='bold', fontsize=13)
+    ax.set_title('Performance par Famille de Produit', fontweight='bold', fontsize=14, pad=15)
+    ax.grid(True, alpha=0.3, axis='x', linestyle='--')
+    ax.set_xlim([90, 100])
+    ax.invert_yaxis()  # Top 1 en haut
+
+    # Ajouter les valeurs et volume sur les barres
     for i, (_, row) in enumerate(df_top.iterrows()):
         acc_val = row['Accuracy'] * 100
         volume = row['N_Total']
-        ax1.text(acc_val + 0.3, i, f'{acc_val:.1f}% (n={volume})',
-                va='center', fontsize=8, fontweight='bold')
+        auto = row['N_Auto']
 
-    # Graphique 2: Volume et taux d'automatisation
-    ax1_2 = ax2.twinx()
+        # Valeur accuracy
+        ax.text(acc_val + 0.2, i, f'{acc_val:.1f}%',
+               va='center', ha='left', fontsize=10, fontweight='bold')
 
-    x_pos = range(len(df_top))
+        # Volume à gauche
+        ax.text(90.5, i, f'n={volume} ({auto} auto)',
+               va='center', ha='left', fontsize=9, style='italic', color='dimgray')
 
-    bars1 = ax2.bar(x_pos, df_top['N_Total'], color='#3498db', alpha=0.6, label='Volume total', edgecolor='black', linewidth=1)
-    line1 = ax1_2.plot(x_pos, df_top['Taux_Auto'], color='#e74c3c', marker='o', linewidth=2,
-                       markersize=8, label='Taux automatisation', linestyle='--')
+    # Ligne de référence à 95%
+    ax.axvline(x=95, color='red', linestyle='--', linewidth=2, alpha=0.5, label='Seuil 95%')
+    ax.axvline(x=98, color='green', linestyle='--', linewidth=2, alpha=0.5, label='Seuil 98%')
+    ax.legend(loc='lower right', fontsize=10)
 
-    ax2.set_xlabel('Famille de Produit', fontweight='bold', fontsize=11)
-    ax2.set_ylabel('Volume', fontweight='bold', fontsize=11, color='#3498db')
-    ax1_2.set_ylabel('Taux automatisation (%)', fontweight='bold', fontsize=11, color='#e74c3c')
-    ax2.set_title('Volume et Taux d\'Automatisation (Top 15)', fontweight='bold', fontsize=13)
-    ax2.set_xticks(x_pos)
-    ax2.set_xticklabels(df_top['Famille'], rotation=45, ha='right', fontsize=8)
-    ax2.grid(True, alpha=0.3, axis='y')
-    ax2.tick_params(axis='y', labelcolor='#3498db')
-    ax1_2.tick_params(axis='y', labelcolor='#e74c3c')
-
-    # Légende combinée
-    lines1, labels1 = ax2.get_legend_handles_labels()
-    lines2, labels2 = ax1_2.get_legend_handles_labels()
-    ax2.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+    # Note en bas
+    note_text = "Vert: Excellente (≥98%) | Orange: Bonne (≥95%) | Rouge: À améliorer (<95%)"
+    fig.text(0.5, 0.02, note_text, ha='center', fontsize=10,
+            style='italic', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
 
     plt.tight_layout()
 

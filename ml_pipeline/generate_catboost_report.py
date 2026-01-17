@@ -671,7 +671,7 @@ def viz_5_impact_business(df, y_true, y_prob, threshold_low, threshold_high):
 
 
 def viz_6_top_families(df, y_true, y_prob, threshold_low, threshold_high):
-    """Visualisation 6: Performance par famille (version améliorée)"""
+    """Visualisation 6: Performance par famille (histogramme simple)"""
     print("\n📊 Génération: Top familles de produits...")
 
     df_analysis = df.copy()
@@ -699,106 +699,71 @@ def viz_6_top_families(df, y_true, y_prob, threshold_low, threshold_high):
             y_pred_auto = y_pred_family[mask_auto]
 
             accuracy = accuracy_score(y_true_auto, y_pred_auto)
-            precision = precision_score(y_true_auto, y_pred_auto, zero_division=0)
-            recall = recall_score(y_true_auto, y_pred_auto, zero_division=0)
 
             results.append({
                 'Famille': str(family)[:50],
                 'Volume': len(df_family),
                 'Automatisés': mask_auto.sum(),
                 'Taux_Auto': 100 * mask_auto.sum() / len(df_family),
-                'Accuracy': accuracy,
-                'Precision': precision,
-                'Recall': recall,
-                'Score_Global': (accuracy + precision + recall) / 3
+                'Accuracy': accuracy
             })
 
     df_results = pd.DataFrame(results).sort_values('Volume', ascending=False)
 
-    # Top 12 familles
-    df_top = df_results.head(12)
+    # Top 15 familles
+    df_top = df_results.head(15).copy()
+    # Inverser pour avoir le Top 1 en haut
+    df_top = df_top.iloc[::-1].reset_index(drop=True)
 
-    # Créer la figure
-    fig, axes = plt.subplots(2, 2, figsize=(20, 14))
-    fig.suptitle('PERFORMANCE PAR FAMILLE DE PRODUIT - Top 12', fontsize=16, fontweight='bold')
+    # Créer la figure - Histogramme simple
+    fig, ax = plt.subplots(figsize=(14, 10))
+    fig.suptitle('ACCURACY PAR FAMILLE DE PRODUIT - CatBoost (Top 15)',
+                 fontsize=16, fontweight='bold', y=0.98)
 
-    # 1. Accuracy par famille
-    ax1 = axes[0, 0]
+    # Couleurs selon performance
     colors = ['#27ae60' if acc >= 0.98 else '#f39c12' if acc >= 0.95 else '#e74c3c'
               for acc in df_top['Accuracy']]
 
+    # Histogramme horizontal
     y_pos = range(len(df_top))
-    bars = ax1.barh(y_pos, df_top['Accuracy'] * 100, color=colors, alpha=0.8, edgecolor='black', linewidth=1)
-    ax1.set_yticks(y_pos)
-    ax1.set_yticklabels(df_top['Famille'], fontsize=9)
-    ax1.set_xlabel('Accuracy (%)', fontweight='bold')
-    ax1.set_title('Accuracy par Famille', fontweight='bold', fontsize=12)
-    ax1.set_xlim([90, 100])
-    ax1.grid(True, alpha=0.3, axis='x')
-    ax1.invert_yaxis()
+    bars = ax.barh(y_pos, df_top['Accuracy'] * 100, color=colors, alpha=0.8,
+                   edgecolor='black', linewidth=1.5)
 
+    # Étiquettes
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(df_top['Famille'], fontsize=11)
+    ax.set_xlabel('Accuracy (%)', fontweight='bold', fontsize=13)
+    ax.set_title('Performance par Famille de Produit', fontweight='bold', fontsize=14, pad=15)
+    ax.grid(True, alpha=0.3, axis='x', linestyle='--')
+    ax.set_xlim([90, 100])
+    ax.invert_yaxis()  # Top 1 en haut
+
+    # Ajouter les valeurs et volume sur les barres
     for i, (_, row) in enumerate(df_top.iterrows()):
-        ax1.text(row['Accuracy'] * 100 + 0.2, i, f"{row['Accuracy']*100:.1f}%",
-                va='center', fontsize=8, fontweight='bold')
+        acc_val = row['Accuracy'] * 100
+        volume = row['Volume']
+        auto = row['Automatisés']
 
-    # 2. Volume et automatisation
-    ax2 = axes[0, 1]
-    ax2_twin = ax2.twinx()
+        # Valeur accuracy
+        ax.text(acc_val + 0.2, i, f'{acc_val:.1f}%',
+               va='center', ha='left', fontsize=10, fontweight='bold')
 
-    x_pos = range(len(df_top))
-    bars = ax2.bar(x_pos, df_top['Volume'], color='#3498db', alpha=0.6, edgecolor='black', linewidth=1)
-    line = ax2_twin.plot(x_pos, df_top['Taux_Auto'], color='#e74c3c', marker='o',
-                        linewidth=2.5, markersize=8, linestyle='--')
+        # Volume à gauche
+        ax.text(90.5, i, f'n={volume} ({auto} auto)',
+               va='center', ha='left', fontsize=9, style='italic', color='dimgray')
 
-    ax2.set_xticks(x_pos)
-    ax2.set_xticklabels(df_top['Famille'], rotation=45, ha='right', fontsize=8)
-    ax2.set_ylabel('Volume', fontweight='bold', color='#3498db')
-    ax2_twin.set_ylabel('Taux Auto (%)', fontweight='bold', color='#e74c3c')
-    ax2.set_title('Volume et Taux d\'Automatisation', fontweight='bold', fontsize=12)
-    ax2.tick_params(axis='y', labelcolor='#3498db')
-    ax2_twin.tick_params(axis='y', labelcolor='#e74c3c')
-    ax2.grid(True, alpha=0.3, axis='y')
+    # Lignes de référence
+    ax.axvline(x=95, color='red', linestyle='--', linewidth=2, alpha=0.5, label='Seuil 95%')
+    ax.axvline(x=98, color='green', linestyle='--', linewidth=2, alpha=0.5, label='Seuil 98%')
+    ax.legend(loc='lower right', fontsize=10)
 
-    # 3. Precision vs Recall
-    ax3 = axes[1, 0]
-
-    scatter = ax3.scatter(df_top['Recall'] * 100, df_top['Precision'] * 100,
-                         s=df_top['Volume'] * 2, alpha=0.6, c=df_top['Accuracy'],
-                         cmap='RdYlGn', edgecolors='black', linewidth=1.5, vmin=0.9, vmax=1.0)
-
-    for _, row in df_top.iterrows():
-        ax3.annotate(row['Famille'][:20], (row['Recall'] * 100, row['Precision'] * 100),
-                    fontsize=7, alpha=0.7)
-
-    ax3.set_xlabel('Recall (%)', fontweight='bold')
-    ax3.set_ylabel('Precision (%)', fontweight='bold')
-    ax3.set_title('Precision vs Recall (taille = volume, couleur = accuracy)', fontweight='bold', fontsize=12)
-    ax3.grid(True, alpha=0.3)
-    plt.colorbar(scatter, ax=ax3, label='Accuracy')
-
-    # 4. Heatmap des métriques
-    ax4 = axes[1, 1]
-
-    heatmap_data = df_top[['Accuracy', 'Precision', 'Recall']].values.T
-
-    im = ax4.imshow(heatmap_data, cmap='RdYlGn', aspect='auto', vmin=0.9, vmax=1.0)
-
-    ax4.set_xticks(range(len(df_top)))
-    ax4.set_xticklabels(df_top['Famille'], rotation=45, ha='right', fontsize=8)
-    ax4.set_yticks([0, 1, 2])
-    ax4.set_yticklabels(['Accuracy', 'Precision', 'Recall'], fontsize=10)
-    ax4.set_title('Heatmap des Métriques', fontweight='bold', fontsize=12)
-
-    # Annotations
-    for i in range(3):
-        for j in range(len(df_top)):
-            text = ax4.text(j, i, f'{heatmap_data[i, j]:.2%}',
-                          ha='center', va='center', color='black', fontsize=7, weight='bold')
-
-    plt.colorbar(im, ax=ax4, label='Score')
+    # Note en bas
+    note_text = "Vert: Excellente (≥98%) | Orange: Bonne (≥95%) | Rouge: À améliorer (<95%)"
+    fig.text(0.5, 0.02, note_text, ha='center', fontsize=10,
+            style='italic', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
 
     plt.tight_layout()
-    output_path = OUTPUT_DIR / '06_top_families_advanced.png'
+    output_path = OUTPUT_DIR / '06_accuracy_by_family.png'
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f"   ✅ Sauvegardé: {output_path.name}")
     plt.close()
@@ -980,7 +945,7 @@ def main():
     print("   3. 03_performance_temporelle.png - Évolution mensuelle")
     print("   4. 04_analyse_par_montant.png - Performance par tranche de montant")
     print("   5. 05_impact_business.png - Impact financier détaillé")
-    print("   6. 06_top_families_advanced.png - Analyse approfondie par famille")
+    print("   6. 06_accuracy_by_family.png - Accuracy par famille (histogramme simple)")
     print("   7. RAPPORT_CATBOOST.txt - Rapport texte complet")
     print("\n💡 Utilisez ces visualisations pour présenter les résultats du modèle!")
 
