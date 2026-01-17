@@ -595,19 +595,22 @@ def generate_family_accuracy_chart(df_results):
     """Générer le graphique d'accuracy par famille pour XGBoost"""
     print("\n📊 Génération du graphique d'accuracy par famille...")
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 8))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
     fig.suptitle('ACCURACY PAR FAMILLE DE PRODUIT - XGBoost', fontsize=16, fontweight='bold')
 
     # Top 15 familles par volume
-    df_top = df_results.head(15)
+    df_top = df_results.head(15).copy()
+    # Inverser l'ordre pour avoir le Top 1 en haut
+    df_top = df_top.iloc[::-1].reset_index(drop=True)
 
     # Graphique 1: Accuracy
     colors = ['#27ae60' if acc >= 0.98 else '#f39c12' if acc >= 0.95 else '#e74c3c'
               for acc in df_top['Accuracy']]
 
-    bars = ax1.barh(range(len(df_top)), df_top['Accuracy'] * 100, color=colors, alpha=0.8, edgecolor='black', linewidth=1)
-    ax1.set_yticks(range(len(df_top)))
-    ax1.set_yticklabels(df_top['Famille'], fontsize=9)
+    y_pos = range(len(df_top))
+    bars = ax1.barh(y_pos, df_top['Accuracy'] * 100, color=colors, alpha=0.8, edgecolor='black', linewidth=1)
+    ax1.set_yticks(y_pos)
+    ax1.set_yticklabels(df_top['Famille'], fontsize=8)
     ax1.set_xlabel('Accuracy (%)', fontweight='bold', fontsize=11)
     ax1.set_title('Accuracy par Famille (Top 15)', fontweight='bold', fontsize=13)
     ax1.grid(True, alpha=0.3, axis='x')
