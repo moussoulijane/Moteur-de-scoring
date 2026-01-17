@@ -105,8 +105,21 @@ def analyze_families(df, y_true, y_prob, threshold_low, threshold_high):
         recall = recall_score(y_true_auto, y_pred_auto, zero_division=0)
 
         # Confusion matrix
-        cm = confusion_matrix(y_true_auto, y_pred_auto)
-        tn, fp, fn, tp = cm.ravel()
+        cm = confusion_matrix(y_true_auto, y_pred_auto, labels=[0, 1])
+
+        # S'assurer que cm a la bonne forme (2x2)
+        if cm.shape == (2, 2):
+            tn, fp, fn, tp = cm.ravel()
+        else:
+            # Gérer le cas où il n'y a qu'une classe
+            # Initialiser à 0
+            tn, fp, fn, tp = 0, 0, 0, 0
+
+            # Compter manuellement
+            tp = ((y_true_auto == 1) & (y_pred_auto == 1)).sum()
+            tn = ((y_true_auto == 0) & (y_pred_auto == 0)).sum()
+            fp = ((y_true_auto == 0) & (y_pred_auto == 1)).sum()
+            fn = ((y_true_auto == 1) & (y_pred_auto == 0)).sum()
 
         # Calculs financiers
         fp_mask = (y_true_auto == 0) & (y_pred_auto == 1)
