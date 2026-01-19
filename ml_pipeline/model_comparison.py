@@ -879,6 +879,9 @@ class ModelComparison:
         self.generate_comparison_chart()
         self.generate_report()
 
+        # Sauvegarder les modèles et le preprocessor
+        self.save_models()
+
         # Sauvegarder les prédictions pour analyze_results.py
         self.save_predictions()
 
@@ -895,6 +898,26 @@ class ModelComparison:
         print(f"\n🏆 MEILLEUR MODÈLE: {best_model}")
         print(f"   Gain NET: {self.results[best_model]['gain_net']:,.0f} DH")
         print(f"   F1-Score: {self.results[best_model]['f1']:.4f}")
+
+    def save_models(self):
+        """Sauvegarder les modèles entraînés et le preprocessor"""
+        print("\n💾 Sauvegarde des modèles...")
+
+        output_dir = Path('outputs/production/models')
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Sauvegarder tous les modèles
+        for model_name, model in self.models.items():
+            model_path = output_dir / f'{model_name.lower()}_model.pkl'
+            joblib.dump(model, model_path)
+            print(f"✅ {model_name} sauvegardé: {model_path}")
+
+        # Sauvegarder le preprocessor
+        preprocessor_path = output_dir / 'preprocessor.pkl'
+        joblib.dump(self.preprocessor, preprocessor_path)
+        print(f"✅ Preprocessor sauvegardé: {preprocessor_path}")
+
+        print(f"\n📂 Modèles disponibles pour l'inférence dans: {output_dir}")
 
     def save_predictions(self):
         """Sauvegarder les prédictions pour une réutilisation ultérieure"""
