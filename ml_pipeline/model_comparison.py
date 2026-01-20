@@ -12,7 +12,6 @@ import joblib
 from pathlib import Path
 from datetime import datetime
 from sklearn.model_selection import cross_val_score, StratifiedKFold
-from sklearn.preprocessing import RobustScaler
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 from sklearn.ensemble import RandomForestClassifier
 import xgboost as xgb
@@ -23,166 +22,14 @@ import seaborn as sns
 import warnings
 warnings.filterwarnings('ignore')
 
+# Import du preprocessor
+from preprocessor import ProductionPreprocessor
+
 # Configuration
 sns.set_style('whitegrid')
 plt.rcParams['figure.figsize'] = (16, 10)
 
 PRIX_UNITAIRE_DH = 169
-
-
-class ProductionPreprocessor:
-    """Preprocessing production avec gestion stricte de l'ordre des colonnes"""
-
-    def __init__(self):
-        self.scaler = RobustScaler()
-        self.family_medians = {}
-        self.categorical_encodings = {}
-        self.feature_names_fitted = None
-
-    def fit(self, df):
-        """Fit sur données 2024"""
-        print("\n🔧 Configuration du preprocessing...")
-
-        X = df.copy()
-
-        # Calculer médianes par famille
-        print("📊 Calcul médianes par famille (base 2024)...")
-        self.family_medians = X.groupby('Famille Produit')['Montant demandé'].median().to_dict()
-        print(f"   ✅ {len(self.family_medians)} familles")
-
-        # Encoder catégorielles
-        print("🔢 Encodage catégorielles...")
-        categorical_cols = ['Marché', 'Segment', 'Famille Produit', 'Catégorie', 'Sous-catégorie']
-
-        for col in categorical_cols:
-            if col in X.columns:
-                self.categorical_encodings[col] = X[col].value_counts().to_dict()
-                X[f'{col}_freq'] = X[col].map(self.categorical_encodings[col]).fillna(0)
-
-        # Features
-        X = self._create_features(X, fit_mode=True)
-
-        # Colonnes numériques
-        numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
-        numeric_cols = [c for c in numeric_cols if c != 'Fondee']
-
-        # CRITICAL: Sauvegarder l'ordre des colonnes (trié alphabétiquement)
-        self.feature_names_fitted = sorted(numeric_cols)
-        print(f"📋 Features finales: {len(self.feature_names_fitted)}")
-
-        # Fit scaler avec colonnes dans le bon ordre
-        X_ordered = X[self.feature_names_fitted]
-        self.scaler.fit(X_ordered)
-
-        print(f"✅ Preprocessing configuré: {len(self.feature_names_fitted)} features")
-
-        return self
-
-    def transform(self, df):
-        """Transform sur données 2024 ou 2025"""
-        X = df.copy()
-
-        # Encoder catégorielles avec encodages de 2024
-        categorical_cols = ['Marché', 'Segment', 'Famille Produit', 'Catégorie', 'Sous-catégorie']
-
-        for col in categorical_cols:
-            if col in X.columns and col in self.categorical_encodings:
-                X[f'{col}_freq'] = X[col].map(self.categorical_encodings[col]).fillna(0)
-
-        # Features
-        X = self._create_features(X, fit_mode=False)
-
-        # Colonnes numériques
-        numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
-        numeric_cols = [c for c in numeric_cols if c != 'Fondee']
-
-        # CRITICAL: Utiliser EXACTEMENT les mêmes colonnes dans le même ordre
-        # Gérer les colonnes manquantes (ajouter avec valeur 0)
-        for col in self.feature_names_fitted:
-            if col not in X.columns:
-                X[col] = 0
-
-        # Garder seulement les colonnes utilisées lors du fit, dans le bon ordre
-        X = X[self.feature_names_fitted]
-
-        # Scaler
-        X[self.feature_names_fitted] = self.scaler.transform(X[self.feature_names_fitted])
-
-        return X
-
-    def _create_features(self, X, fit_mode=True):
-        """Création des features engineered"""
-        df = X.copy()
-
-        # 1. Ratio couverture PNB
-        if 'PNB analytique (vision commerciale) cumulé' in df.columns and 'Montant demandé' in df.columns:
-            df['ratio_pnb_montant'] = (
-                df['PNB analytique (vision commerciale) cumulé'] /
-                (df['Montant demandé'] + 1)
-            )
-
-        # 2. Écart à la médiane de la famille (calculé sur 2024, appliqué partout)
-        if 'Famille Produit' in df.columns and 'Montant demandé' in df.columns:
-            df['ecart_mediane_famille'] = df.apply(
-                lambda row: (
-                    row['Montant demandé'] -
-                    self.family_medians.get(row['Famille Produit'], row['Montant demandé'])
-                ) / (self.family_medians.get(row['Famille Produit'], 1) + 1),
-                axis=1
-            )
-
-        # 3. Log transformations
-        if 'Montant demandé' in df.columns:
-            df['log_montant'] = np.log1p(np.abs(df['Montant demandé']))
-
-        if 'PNB analytique (vision commerciale) cumulé' in df.columns:
-            df['log_pnb'] = np.log1p(np.abs(df['PNB analytique (vision commerciale) cumulé']))
-
-        if 'anciennete_annees' in df.columns:
-            df['log_anciennete'] = np.log1p(np.abs(df['anciennete_annees']))
-
-        # 4. Features d'interaction
-        if 'Montant demandé' in df.columns and 'anciennete_annees' in df.columns:
-            df['montant_x_anciennete'] = df['Montant demandé'] * df['anciennete_annees']
-
-        if 'PNB analytique (vision commerciale) cumulé' in df.columns and 'anciennete_annees' in df.columns:
-            df['pnb_x_anciennete'] = df['PNB analytique (vision commerciale) cumulé'] * df['anciennete_annees']
-
-        # Sélectionner colonnes numériques
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-
-        # Garder colonnes nécessaires
-        keep_cols = [col for col in numeric_cols
-                     if col != 'Fondee']
-
-        df_result = df[keep_cols]
-
-        # CRITICAL: Nettoyer les inf et NaN
-        df_result = self._clean_numeric_data(df_result)
-
-        return df_result
-
-    def _clean_numeric_data(self, df):
-        """Nettoie les NaN et inf dans les colonnes numériques"""
-        df_clean = df.copy()
-
-        for col in df_clean.columns:
-            if df_clean[col].dtype in [np.float64, np.float32, np.int64, np.int32]:
-                # Remplacer inf et -inf par NaN
-                df_clean[col] = df_clean[col].replace([np.inf, -np.inf], np.nan)
-
-                # Remplacer NaN par la médiane ou 0
-                median_val = df_clean[col].median()
-                if pd.isna(median_val):
-                    median_val = 0.0
-                df_clean[col] = df_clean[col].fillna(median_val)
-
-        return df_clean
-
-    def fit_transform(self, df):
-        """Fit puis transform"""
-        self.fit(df)
-        return self.transform(df)
 
 
 class ModelComparison:
@@ -879,6 +726,9 @@ class ModelComparison:
         self.generate_comparison_chart()
         self.generate_report()
 
+        # Sauvegarder les modèles et le preprocessor
+        self.save_models()
+
         # Sauvegarder les prédictions pour analyze_results.py
         self.save_predictions()
 
@@ -895,6 +745,26 @@ class ModelComparison:
         print(f"\n🏆 MEILLEUR MODÈLE: {best_model}")
         print(f"   Gain NET: {self.results[best_model]['gain_net']:,.0f} DH")
         print(f"   F1-Score: {self.results[best_model]['f1']:.4f}")
+
+    def save_models(self):
+        """Sauvegarder les modèles entraînés et le preprocessor"""
+        print("\n💾 Sauvegarde des modèles...")
+
+        output_dir = Path('outputs/production/models')
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Sauvegarder tous les modèles
+        for model_name, model in self.models.items():
+            model_path = output_dir / f'{model_name.lower()}_model.pkl'
+            joblib.dump(model, model_path)
+            print(f"✅ {model_name} sauvegardé: {model_path}")
+
+        # Sauvegarder le preprocessor
+        preprocessor_path = output_dir / 'preprocessor.pkl'
+        joblib.dump(self.preprocessor, preprocessor_path)
+        print(f"✅ Preprocessor sauvegardé: {preprocessor_path}")
+
+        print(f"\n📂 Modèles disponibles pour l'inférence dans: {output_dir}")
 
     def save_predictions(self):
         """Sauvegarder les prédictions pour une réutilisation ultérieure"""

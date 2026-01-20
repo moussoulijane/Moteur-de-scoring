@@ -1,7 +1,7 @@
 """
-ANALYSE POST-ENTRAÎNEMENT - XGBoost uniquement avec 3 Zones de Décision et Règle Métier
+ANALYSE POST-ENTRAÎNEMENT - CatBoost uniquement avec 3 Zones de Décision et Règle Métier
 Génère des analyses détaillées sans réentraîner le modèle
-Usage: python analyze_results.py
+Usage: python analyze_results_catboost.py
 """
 import sys
 sys.path.append('src')
@@ -24,9 +24,9 @@ PRIX_UNITAIRE_DH = 169
 
 
 def load_results():
-    """Charger les résultats du modèle XGBoost avec les seuils"""
+    """Charger les résultats du modèle CatBoost avec les seuils"""
     print("\n" + "="*80)
-    print("📂 CHARGEMENT DES RÉSULTATS - XGBoost")
+    print("📂 CHARGEMENT DES RÉSULTATS - CatBoost")
     print("="*80)
 
     # Charger les données 2025
@@ -43,25 +43,25 @@ def load_results():
 
         y_true = predictions_data['y_true']
 
-        if 'XGBoost' in predictions_data:
-            xgboost_results = {
-                'y_prob': predictions_data['XGBoost']['y_prob'],
-                'threshold_low': predictions_data['XGBoost']['threshold_low'],
-                'threshold_high': predictions_data['XGBoost']['threshold_high']
+        if 'CatBoost' in predictions_data:
+            catboost_results = {
+                'y_prob': predictions_data['CatBoost']['y_prob'],
+                'threshold_low': predictions_data['CatBoost']['threshold_low'],
+                'threshold_high': predictions_data['CatBoost']['threshold_high']
             }
-            print(f"   ✓ XGBoost (seuils: {xgboost_results['threshold_low']:.4f} / {xgboost_results['threshold_high']:.4f})")
+            print(f"   ✓ CatBoost (seuils: {catboost_results['threshold_low']:.4f} / {catboost_results['threshold_high']:.4f})")
         else:
-            print("❌ XGBoost non trouvé dans les prédictions!")
+            print("❌ CatBoost non trouvé dans les prédictions!")
             return None, None, None
 
-        print(f"✅ Prédictions XGBoost chargées")
+        print(f"✅ Prédictions CatBoost chargées")
 
     else:
         print("⚠️  Fichier de prédictions non trouvé!")
         print("   Exécutez d'abord: python model_comparison.py")
         return None, None, None
 
-    return df_2025, y_true, xgboost_results
+    return df_2025, y_true, catboost_results
 
 
 def create_3zone_predictions(y_prob, threshold_low, threshold_high):
@@ -79,7 +79,7 @@ def create_3zone_predictions(y_prob, threshold_low, threshold_high):
 
 def apply_business_rule(df_2025, y_true, y_prob, threshold_low, threshold_high):
     """Appliquer la règle métier: 1 validation auto par client par année"""
-    print(f"\n🔒 Application de la règle métier - XGBoost")
+    print(f"\n🔒 Application de la règle métier - CatBoost")
     print("="*80)
 
     df_scenario = df_2025.copy()
@@ -153,7 +153,7 @@ def apply_business_rule(df_2025, y_true, y_prob, threshold_low, threshold_high):
 
 def calculate_financial_impact(df_scenario):
     """Calculer l'impact financier avec et sans règle (3 zones)"""
-    print(f"\n💰 Calcul de l'impact financier - XGBoost")
+    print(f"\n💰 Calcul de l'impact financier - CatBoost")
     print("="*80)
 
     montants = df_scenario['Montant demandé'].values
@@ -254,7 +254,7 @@ def calculate_financial_impact(df_scenario):
 
 
 def generate_confusion_matrix(df_scenario, y_true, y_prob, threshold_low, threshold_high):
-    """Générer la matrice de confusion pour XGBoost"""
+    """Générer la matrice de confusion pour CatBoost"""
     print("\n" + "="*80)
     print("📊 GÉNÉRATION DE LA MATRICE DE CONFUSION")
     print("="*80)
@@ -282,7 +282,7 @@ def generate_confusion_matrix(df_scenario, y_true, y_prob, threshold_low, thresh
         annotations.append(row)
 
     # Heatmap
-    sns.heatmap(cm, annot=annotations, fmt='', cmap='Blues', ax=ax,
+    sns.heatmap(cm, annot=annotations, fmt='', cmap='Purples', ax=ax,
                 xticklabels=['Non Fondée', 'Fondée'],
                 yticklabels=['Non Fondée', 'Fondée'],
                 cbar_kws={'label': 'Nombre'},
@@ -290,7 +290,7 @@ def generate_confusion_matrix(df_scenario, y_true, y_prob, threshold_low, thresh
 
     ax.set_xlabel('Prédiction', fontweight='bold', fontsize=12)
     ax.set_ylabel('Réalité', fontweight='bold', fontsize=12)
-    ax.set_title('MATRICE DE CONFUSION - XGBoost (sur cas automatisés)',
+    ax.set_title('MATRICE DE CONFUSION - CatBoost (sur cas automatisés)',
                  fontweight='bold', fontsize=14, pad=20)
 
     # Stats
@@ -308,15 +308,15 @@ def generate_confusion_matrix(df_scenario, y_true, y_prob, threshold_low, thresh
     output_dir = Path('outputs/production/figures')
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    output_path = output_dir / 'xgboost_confusion_matrix.png'
+    output_path = output_dir / 'catboost_confusion_matrix.png'
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    print(f"✅ Sauvegardé: xgboost_confusion_matrix.png")
+    print(f"✅ Sauvegardé: catboost_confusion_matrix.png")
 
     plt.close()
 
 
 def generate_business_rule_visualizations(impact, df_scenario):
-    """Générer les visualisations de la règle métier pour XGBoost"""
+    """Générer les visualisations de la règle métier pour CatBoost"""
     print("\n" + "="*80)
     print("📊 GÉNÉRATION DES VISUALISATIONS RÈGLE MÉTIER")
     print("="*80)
@@ -324,7 +324,7 @@ def generate_business_rule_visualizations(impact, df_scenario):
     fig = plt.figure(figsize=(16, 10))
     gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
 
-    fig.suptitle('IMPACT DE LA RÈGLE MÉTIER - XGBoost', fontsize=16, fontweight='bold', y=0.98)
+    fig.suptitle('IMPACT DE LA RÈGLE MÉTIER - CatBoost', fontsize=16, fontweight='bold', y=0.98)
 
     # 1. Taux d'automatisation
     ax1 = fig.add_subplot(gs[0, 0])
@@ -505,7 +505,7 @@ def generate_business_rule_visualizations(impact, df_scenario):
     ax9.axis('off')
 
     summary_text = f"""
-    📊 RÉSUMÉ DES MÉTRIQUES - XGBoost
+    📊 RÉSUMÉ DES MÉTRIQUES - CatBoost
 
     SANS règle métier:
     • Automatisés: {impact['sans_regle']['auto']}/{impact['sans_regle']['total']} ({impact['sans_regle']['taux_auto']:.1f}%)
@@ -526,22 +526,22 @@ def generate_business_rule_visualizations(impact, df_scenario):
 
     ax9.text(0.1, 0.5, summary_text, transform=ax9.transAxes,
             fontsize=10, verticalalignment='center', family='monospace',
-            bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.3))
+            bbox=dict(boxstyle='round', facecolor='plum', alpha=0.3))
 
     plt.tight_layout()
 
     output_dir = Path('outputs/production/figures')
-    output_path = output_dir / 'xgboost_business_rule_impact.png'
+    output_path = output_dir / 'catboost_business_rule_impact.png'
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    print(f"✅ Sauvegardé: xgboost_business_rule_impact.png")
+    print(f"✅ Sauvegardé: catboost_business_rule_impact.png")
 
     plt.close()
 
 
 def analyze_by_family(df_2025, y_true, y_prob, threshold_low, threshold_high):
-    """Analyser l'accuracy par famille pour XGBoost"""
+    """Analyser l'accuracy par famille pour CatBoost"""
     print("\n" + "="*80)
-    print("📊 ANALYSE PAR FAMILLE DE PRODUIT - XGBoost")
+    print("📊 ANALYSE PAR FAMILLE DE PRODUIT - CatBoost")
     print("="*80)
 
     y_pred = create_3zone_predictions(y_prob, threshold_low, threshold_high)
@@ -592,7 +592,7 @@ def analyze_by_family(df_2025, y_true, y_prob, threshold_low, threshold_high):
 
 
 def generate_family_accuracy_chart(df_results):
-    """Générer le graphique d'accuracy par famille pour XGBoost"""
+    """Générer le graphique d'accuracy par famille pour CatBoost"""
     print("\n📊 Génération du graphique d'accuracy par famille...")
 
     # Top 15 familles par volume
@@ -602,7 +602,7 @@ def generate_family_accuracy_chart(df_results):
 
     # Créer la figure
     fig, ax = plt.subplots(figsize=(14, 10))
-    fig.suptitle('ACCURACY PAR FAMILLE DE PRODUIT - XGBoost (Top 15)',
+    fig.suptitle('ACCURACY PAR FAMILLE DE PRODUIT - CatBoost (Top 15)',
                  fontsize=16, fontweight='bold', y=0.98)
 
     # Couleurs selon performance
@@ -650,25 +650,25 @@ def generate_family_accuracy_chart(df_results):
     plt.tight_layout()
 
     output_dir = Path('outputs/production/figures')
-    output_path = output_dir / 'xgboost_accuracy_by_family.png'
+    output_path = output_dir / 'catboost_accuracy_by_family.png'
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    print(f"✅ Sauvegardé: xgboost_accuracy_by_family.png")
+    print(f"✅ Sauvegardé: catboost_accuracy_by_family.png")
 
     plt.close()
 
 
 def save_summary_report(impact, df_family):
-    """Sauvegarder un rapport récapitulatif pour XGBoost"""
+    """Sauvegarder un rapport récapitulatif pour CatBoost"""
     print("\n📝 Génération du rapport récapitulatif...")
 
     output_dir = Path('outputs/production')
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    report_path = output_dir / 'xgboost_rapport_analyse.txt'
+    report_path = output_dir / 'catboost_rapport_analyse.txt'
 
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write("="*80 + "\n")
-        f.write("RAPPORT D'ANALYSE - XGBoost avec 3 ZONES + RÈGLE MÉTIER\n")
+        f.write("RAPPORT D'ANALYSE - CatBoost avec 3 ZONES + RÈGLE MÉTIER\n")
         f.write("="*80 + "\n\n")
 
         f.write("SYSTÈME À 3 ZONES DE DÉCISION:\n")
@@ -683,7 +683,7 @@ def save_summary_report(impact, df_family):
         f.write("- Les validations suivantes sont transformées en audits humains\n\n")
 
         f.write("="*80 + "\n")
-        f.write("RÉSULTATS XGBoost\n")
+        f.write("RÉSULTATS CatBoost\n")
         f.write("="*80 + "\n\n")
 
         f.write(f"SANS RÈGLE MÉTIER:\n")
@@ -720,24 +720,24 @@ def save_summary_report(impact, df_family):
             f.write(f"Auto: {row['N_Auto']:4d} ({row['Taux_Auto']:5.1f}%) | ")
             f.write(f"Acc: {row['Accuracy']*100:5.2f}%\n")
 
-    print(f"✅ Sauvegardé: xgboost_rapport_analyse.txt")
+    print(f"✅ Sauvegardé: catboost_rapport_analyse.txt")
 
 
 def main():
     """Fonction principale"""
     print("="*80)
-    print("ANALYSE POST-ENTRAÎNEMENT - XGBoost avec 3 ZONES + RÈGLE MÉTIER")
+    print("ANALYSE POST-ENTRAÎNEMENT - CatBoost avec 3 ZONES + RÈGLE MÉTIER")
     print("="*80)
 
     # Charger les résultats
-    df_2025, y_true, xgboost_results = load_results()
+    df_2025, y_true, catboost_results = load_results()
 
     if df_2025 is None:
         return
 
-    y_prob = xgboost_results['y_prob']
-    threshold_low = xgboost_results['threshold_low']
-    threshold_high = xgboost_results['threshold_high']
+    y_prob = catboost_results['y_prob']
+    threshold_low = catboost_results['threshold_low']
+    threshold_high = catboost_results['threshold_high']
 
     # Générer la matrice de confusion
     generate_confusion_matrix(df_2025, y_true, y_prob, threshold_low, threshold_high)
@@ -758,13 +758,13 @@ def main():
     save_summary_report(impact, df_family)
 
     print("\n" + "="*80)
-    print("✅ ANALYSE TERMINÉE - XGBoost")
+    print("✅ ANALYSE TERMINÉE - CatBoost")
     print("="*80)
     print("\n📂 Fichiers générés:")
-    print("   - outputs/production/figures/xgboost_confusion_matrix.png")
-    print("   - outputs/production/figures/xgboost_business_rule_impact.png")
-    print("   - outputs/production/figures/xgboost_accuracy_by_family.png")
-    print("   - outputs/production/xgboost_rapport_analyse.txt")
+    print("   - outputs/production/figures/catboost_confusion_matrix.png")
+    print("   - outputs/production/figures/catboost_business_rule_impact.png")
+    print("   - outputs/production/figures/catboost_accuracy_by_family.png")
+    print("   - outputs/production/catboost_rapport_analyse.txt")
 
 
 if __name__ == '__main__':
