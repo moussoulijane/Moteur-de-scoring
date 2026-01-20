@@ -20,15 +20,41 @@ warnings.filterwarnings('ignore')
 from preprocessor_v2 import ProductionPreprocessorV2
 
 
-def load_model_and_preprocessor():
-    """Charger le modèle CatBoost V2 et le preprocessor"""
+def load_model_and_preprocessor(model_choice='best'):
+    """
+    Charger le modèle V2 et le preprocessor
+
+    Args:
+        model_choice: 'best', 'xgboost', ou 'catboost'
+    """
     print("\n" + "="*80)
     print("📂 CHARGEMENT DU MODÈLE V2")
     print("="*80)
 
-    model_path = Path('outputs/production_v2/models/catboost_model_v2.pkl')
     preprocessor_path = Path('outputs/production_v2/models/preprocessor_v2.pkl')
     predictions_path = Path('outputs/production_v2/predictions/predictions_2025_v2.pkl')
+
+    # Déterminer quel modèle charger
+    if model_choice == 'best':
+        model_path = Path('outputs/production_v2/models/best_model_v2.pkl')
+        model_name = 'Best'
+
+        # Lire le nom du meilleur modèle
+        best_info_path = Path('outputs/production_v2/models/best_model_info.txt')
+        if best_info_path.exists():
+            with open(best_info_path, 'r') as f:
+                first_line = f.readline()
+                model_name = first_line.split(': ')[1].strip()
+    elif model_choice == 'xgboost':
+        model_path = Path('outputs/production_v2/models/xgboost_model_v2.pkl')
+        model_name = 'XGBoost'
+    elif model_choice == 'catboost':
+        model_path = Path('outputs/production_v2/models/catboost_model_v2.pkl')
+        model_name = 'CatBoost'
+    else:
+        print(f"❌ Choix de modèle invalide: {model_choice}")
+        print("   Options: 'best', 'xgboost', 'catboost'")
+        return None, None, None, None
 
     if not model_path.exists():
         print(f"❌ Modèle V2 non trouvé: {model_path}")
@@ -42,23 +68,34 @@ def load_model_and_preprocessor():
 
     # Charger modèle
     model = joblib.load(model_path)
-    print(f"✅ Modèle CatBoost V2 chargé")
+    print(f"✅ Modèle {model_name} V2 chargé")
 
     # Charger preprocessor
     preprocessor = joblib.load(preprocessor_path)
     print(f"✅ Preprocessor V2 chargé")
 
-    # Charger seuils
+    # Charger seuils selon le modèle choisi
     if not predictions_path.exists():
         print(f"⚠️  Fichier de prédictions non trouvé, utilisation de seuils par défaut")
         threshold_low = 0.3
         threshold_high = 0.7
     else:
         predictions_data = joblib.load(predictions_path)
-        threshold_low = predictions_data['CatBoost']['threshold_low']
-        threshold_high = predictions_data['CatBoost']['threshold_high']
 
-    print(f"✅ Seuils: BAS={threshold_low:.2f}, HAUT={threshold_high:.2f}")
+        # Utiliser les seuils du meilleur modèle ou du modèle choisi
+        if model_choice == 'best' and 'best_model' in predictions_data:
+            best_name = predictions_data['best_model']
+            threshold_low = predictions_data[best_name]['threshold_low']
+            threshold_high = predictions_data[best_name]['threshold_high']
+            print(f"   (Utilisation des seuils de {best_name})")
+        elif model_choice == 'xgboost':
+            threshold_low = predictions_data['XGBoost']['threshold_low']
+            threshold_high = predictions_data['XGBoost']['threshold_high']
+        else:  # catboost
+            threshold_low = predictions_data['CatBoost']['threshold_low']
+            threshold_high = predictions_data['CatBoost']['threshold_high']
+
+    print(f"✅ Seuils: BAS={threshold_low:.4f}, HAUT={threshold_high:.4f}")
 
     # Afficher info preprocessor
     info = preprocessor.get_feature_info()
@@ -331,11 +368,13 @@ def main():
     parser.add_argument('--input_file', type=str, required=True, help='Fichier Excel avec nouvelles données')
     parser.add_argument('--output_file', type=str, help='Fichier Excel de sortie (optionnel)')
     parser.add_argument('--apply_rule', action='store_true', help='Appliquer la règle métier (1 validation/client/an)')
+    parser.add_argument('--model', type=str, default='best', choices=['best', 'xgboost', 'catboost'],
+                       help='Modèle à utiliser: best (meilleur basé sur gain NET), xgboost, ou catboost')
 
     args = parser.parse_args()
 
     # Charger modèle
-    model, preprocessor, threshold_low, threshold_high = load_model_and_preprocessor()
+    model, preprocessor, threshold_low, threshold_high = load_model_and_preprocessor(args.model)
 
     if model is None:
         return
