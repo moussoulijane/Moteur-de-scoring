@@ -17,7 +17,6 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Import preprocessing
-from data_preprocessing import DataPreprocessor
 from preprocessor_v2 import ProductionPreprocessorV2
 
 
@@ -116,25 +115,21 @@ def verify_required_columns(df, preprocessor):
 
 
 def preprocess_data(df, preprocessor):
-    """Préprocesser les données"""
+    """Préprocesser les données avec ProductionPreprocessorV2"""
     print("\n" + "="*80)
     print("⚙️ PREPROCESSING DES DONNÉES")
     print("="*80)
 
-    # Preprocessing de base
-    data_prep = DataPreprocessor()
-    df_clean = data_prep.preprocess_data(df, is_training_data=False)
-
-    print(f"✅ Preprocessing de base effectué: {len(df_clean)} lignes")
-
-    # Preprocessing du modèle
     try:
-        X = preprocessor.transform(df_clean)
-        print(f"✅ Preprocessing modèle effectué: shape {X.shape}")
-        return X, df_clean
+        # Le ProductionPreprocessorV2 gère tout le preprocessing
+        X = preprocessor.transform(df)
+        print(f"✅ Preprocessing effectué: shape {X.shape}")
+        return X, df
 
     except Exception as e:
         print(f"❌ Erreur lors du preprocessing: {e}")
+        import traceback
+        traceback.print_exc()
         return None, None
 
 
