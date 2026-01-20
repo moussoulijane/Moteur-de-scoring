@@ -22,6 +22,14 @@ class ProductionPreprocessor:
 
         X = df.copy()
 
+        # Nettoyer et convertir les colonnes numériques AVANT tout traitement
+        print("🔧 Conversion des colonnes numériques...")
+        numeric_columns = ['Montant demandé', 'PNB analytique (vision commerciale) cumulé', 'anciennete_annees']
+        for col in numeric_columns:
+            if col in X.columns:
+                X[col] = pd.to_numeric(X[col], errors='coerce').fillna(0)
+                X[col] = X[col].replace([np.inf, -np.inf], 0).clip(lower=0)
+
         # Calculer médianes par famille
         print("📊 Calcul médianes par famille (base 2024)...")
         self.family_medians = X.groupby('Famille Produit')['Montant demandé'].median().to_dict()
@@ -33,6 +41,8 @@ class ProductionPreprocessor:
 
         for col in categorical_cols:
             if col in X.columns:
+                # Convertir en string pour éviter les erreurs de type
+                X[col] = X[col].astype(str).fillna('UNKNOWN')
                 self.categorical_encodings[col] = X[col].value_counts().to_dict()
                 X[f'{col}_freq'] = X[col].map(self.categorical_encodings[col]).fillna(0)
 
@@ -59,11 +69,20 @@ class ProductionPreprocessor:
         """Transform sur données 2024 ou 2025"""
         X = df.copy()
 
+        # Nettoyer et convertir les colonnes numériques AVANT tout traitement
+        numeric_columns = ['Montant demandé', 'PNB analytique (vision commerciale) cumulé', 'anciennete_annees']
+        for col in numeric_columns:
+            if col in X.columns:
+                X[col] = pd.to_numeric(X[col], errors='coerce').fillna(0)
+                X[col] = X[col].replace([np.inf, -np.inf], 0).clip(lower=0)
+
         # Encoder catégorielles avec encodages de 2024
         categorical_cols = ['Marché', 'Segment', 'Famille Produit', 'Catégorie', 'Sous-catégorie']
 
         for col in categorical_cols:
             if col in X.columns and col in self.categorical_encodings:
+                # Convertir en string pour éviter les erreurs de type
+                X[col] = X[col].astype(str).fillna('UNKNOWN')
                 X[f'{col}_freq'] = X[col].map(self.categorical_encodings[col]).fillna(0)
 
         # Features
