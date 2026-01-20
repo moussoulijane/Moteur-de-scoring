@@ -104,6 +104,45 @@ python ml_pipeline_v2/inference_v2.py \
   --apply_rule
 ```
 
+### 3. Analyse des profils de réclamations
+
+Avant ou après l'inférence, analysez les profils pour mieux comprendre vos données:
+
+**Analyse sans prédictions (exploration initiale):**
+
+```bash
+python ml_pipeline_v2/analyze_claims_profile.py --input_file path/to/data.xlsx
+```
+
+**Analyse avec prédictions (après inférence):**
+
+```bash
+python ml_pipeline_v2/analyze_claims_profile.py \
+  --input_file path/to/predictions.xlsx \
+  --with_predictions
+```
+
+**Ce que fait ce script:**
+- 📊 **Distributions**: Montant, délai, ancienneté, PNB, ratios
+- 🏢 **Analyse par famille**: Montant moyen, volume, PNB moyen, délai moyen (Top 15)
+- 🔗 **Corrélations**: Montant vs ancienneté, montant vs PNB, délai vs montant, PNB vs ancienneté
+- 🎯 **Profils par décision** (si prédictions): Distribution par famille, montants moyens, ancienneté
+
+**Graphiques générés:**
+- `01_distributions.png` - 6 graphiques de distribution
+- `02_analyse_famille.png` - 4 analyses par famille
+- `03_correlations.png` - 4 scatter plots avec corrélations
+- `04_profils_decisions.png` - 4 analyses par décision (si `--with_predictions`)
+- `rapport_profils_*.txt` - Rapport texte récapitulatif
+
+**Cas d'usage:**
+- ✅ Comprendre les profils de réclamations avant de prédire
+- ✅ Identifier les familles à fort montant/PNB
+- ✅ Analyser les corrélations entre variables
+- ✅ Interpréter les prédictions du modèle
+- ✅ Détecter des patterns ou anomalies
+
+
 ## 📋 Système de décision (3 zones)
 
 Le modèle utilise **2 seuils** optimisés:
@@ -162,6 +201,7 @@ ml_pipeline_v2/
 ├── preprocessor_v2.py           # Preprocessing production-ready
 ├── model_comparison_v2.py       # Entraînement et évaluation
 ├── inference_v2.py              # Script d'inférence
+├── analyze_claims_profile.py   # Analyse exploratoire des profils
 └── README_V2.md                 # Ce fichier
 
 outputs/production_v2/
@@ -171,6 +211,13 @@ outputs/production_v2/
 ├── predictions/
 │   └── predictions_2025_v2.pkl  # Prédictions et seuils optimaux
 └── rapport_v2.txt               # Rapport de performance
+
+outputs/profile_analysis/
+├── 01_distributions.png         # Distributions des variables
+├── 02_analyse_famille.png       # Métriques par famille
+├── 03_correlations.png          # Corrélations entre variables
+├── 04_profils_decisions.png     # Profils par décision (optionnel)
+└── rapport_profils_*.txt        # Rapport récapitulatif
 ```
 
 ## ✅ Avantages de la V2
