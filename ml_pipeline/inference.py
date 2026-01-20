@@ -17,6 +17,7 @@ warnings.filterwarnings('ignore')
 
 # Import du preprocessing
 from data_preprocessing import DataPreprocessor
+from preprocessor import ProductionPreprocessor
 
 
 def load_model_and_preprocessor():
