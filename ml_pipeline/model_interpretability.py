@@ -81,7 +81,31 @@ class ModelInterpreter:
 
         # Obtenir feature importance
         feature_importance = self.model.get_feature_importance()
-        feature_names = self.preprocessor.feature_names_fitted
+
+        # Obtenir les noms de features - essayer plusieurs méthodes
+        if hasattr(self.model, 'feature_names_'):
+            feature_names = self.model.feature_names_
+        elif hasattr(self.model, 'get_feature_names'):
+            feature_names = self.model.get_feature_names()
+        else:
+            feature_names = self.preprocessor.feature_names_fitted
+
+        # Vérifier les longueurs
+        print(f"\n🔍 Vérification:")
+        print(f"   Nombre de noms de features: {len(feature_names)}")
+        print(f"   Nombre de valeurs d'importance: {len(feature_importance)}")
+
+        # S'assurer que les longueurs correspondent
+        if len(feature_importance) != len(feature_names):
+            print(f"\n⚠️  Ajustement: longueurs différentes")
+            # Si l'importance est plus courte, utiliser seulement les premières features
+            # Si l'importance est plus longue, tronquer
+            min_len = min(len(feature_importance), len(feature_names))
+            feature_importance = feature_importance[:min_len]
+            feature_names = list(feature_names[:min_len])
+            print(f"   ✅ Ajusté à {min_len} features")
+        else:
+            print(f"   ✅ Longueurs cohérentes")
 
         # Créer DataFrame
         df_importance = pd.DataFrame({
