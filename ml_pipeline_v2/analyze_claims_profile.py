@@ -14,6 +14,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 import warnings
+import re
 warnings.filterwarnings('ignore')
 
 # Configuration
@@ -30,6 +31,61 @@ class ClaimProfileAnalyzer:
         self.output_dir = Path('outputs/profile_analysis')
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+    def _clean_numeric_column(self, series):
+        """
+        Nettoyer une colonne numérique qui peut contenir du texte
+
+        Exemples:
+        - "500 mad" -> 500.0
+        - "1 000 DH" -> 1000.0
+        - "1,500.50" -> 1500.50
+        - "1.500,50" -> 1500.50
+        - "abc" -> 0.0
+        """
+        if series.dtype in ['float64', 'float32', 'int64', 'int32']:
+            # Déjà numérique
+            return pd.to_numeric(series, errors='coerce').fillna(0)
+
+        # Convertir en string pour traitement
+        cleaned_series = series.astype(str)
+
+        def clean_value(val):
+            if pd.isna(val) or val in ['', 'nan', 'None', 'NaN']:
+                return 0.0
+
+            # Convertir en string minuscule
+            val_str = str(val).lower().strip()
+
+            # Retirer les mots comme 'mad', 'dh', 'dirham', etc.
+            val_str = re.sub(r'\b(mad|dh|dirham|dirhams|€|euro|euros)\b', '', val_str, flags=re.IGNORECASE)
+
+            # Retirer tous les caractères sauf chiffres, points, virgules, espaces, et signes
+            val_str = re.sub(r'[^\d\s\.,\-\+]', '', val_str)
+
+            # Retirer les espaces (utilisés comme séparateurs de milliers)
+            val_str = val_str.replace(' ', '')
+
+            # Gérer le format européen (1.500,50) vs anglais (1,500.50)
+            # Si une virgule est suivie de 2 chiffres à la fin, c'est probablement un séparateur décimal
+            if re.search(r',\d{2}$', val_str):
+                # Format européen: 1.500,50
+                val_str = val_str.replace('.', '').replace(',', '.')
+            else:
+                # Format anglais: 1,500.50 ou pas de décimales
+                val_str = val_str.replace(',', '')
+
+            # Convertir en float
+            try:
+                return float(val_str) if val_str else 0.0
+            except (ValueError, TypeError):
+                return 0.0
+
+        # Appliquer le nettoyage
+        cleaned = cleaned_series.apply(clean_value)
+
+        # S'assurer que c'est bien numérique
+        return pd.to_numeric(cleaned, errors='coerce').fillna(0)
+
     def load_data(self):
         """Charger les données"""
         print("\n" + "="*80)
@@ -44,13 +100,14 @@ class ClaimProfileAnalyzer:
             self.with_predictions = True
             print(f"✅ Prédictions détectées dans le fichier")
 
-        # Nettoyer les colonnes numériques
+        # Nettoyer les colonnes numériques (avec traitement texte robuste)
+        print("🔧 Conversion des colonnes numériques (texte -> float)...")
         numeric_cols = ['Montant demandé', 'Délai estimé', 'anciennete_annees',
                        'PNB analytique (vision commerciale) cumulé']
 
         for col in numeric_cols:
             if col in self.df.columns:
-                self.df[col] = pd.to_numeric(self.df[col], errors='coerce').fillna(0)
+                self.df[col] = self._clean_numeric_column(self.df[col])
 
         print(f"\n📊 Colonnes disponibles: {len(self.df.columns)}")
         print(f"   - Montant demandé: {'✅' if 'Montant demandé' in self.df.columns else '❌'}")
