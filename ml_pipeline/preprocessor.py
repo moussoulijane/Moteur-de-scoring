@@ -30,19 +30,22 @@ class ProductionPreprocessor:
                 X[col] = pd.to_numeric(X[col], errors='coerce').fillna(0)
                 X[col] = X[col].replace([np.inf, -np.inf], 0).clip(lower=0)
 
-        # Calculer médianes par famille
+        # Convertir catégorielles en string AVANT les calculs
+        print("🔢 Conversion catégorielles en string...")
+        categorical_cols = ['Marché', 'Segment', 'Famille Produit', 'Catégorie', 'Sous-catégorie']
+        for col in categorical_cols:
+            if col in X.columns:
+                X[col] = X[col].astype(str).fillna('UNKNOWN')
+
+        # Calculer médianes par famille (APRÈS conversion en string)
         print("📊 Calcul médianes par famille (base 2024)...")
         self.family_medians = X.groupby('Famille Produit')['Montant demandé'].median().to_dict()
         print(f"   ✅ {len(self.family_medians)} familles")
 
-        # Encoder catégorielles
-        print("🔢 Encodage catégorielles...")
-        categorical_cols = ['Marché', 'Segment', 'Famille Produit', 'Catégorie', 'Sous-catégorie']
-
+        # Encoder catégorielles (fréquences)
+        print("🔢 Encodage fréquences catégorielles...")
         for col in categorical_cols:
             if col in X.columns:
-                # Convertir en string pour éviter les erreurs de type
-                X[col] = X[col].astype(str).fillna('UNKNOWN')
                 self.categorical_encodings[col] = X[col].value_counts().to_dict()
                 X[f'{col}_freq'] = X[col].map(self.categorical_encodings[col]).fillna(0)
 
@@ -76,13 +79,15 @@ class ProductionPreprocessor:
                 X[col] = pd.to_numeric(X[col], errors='coerce').fillna(0)
                 X[col] = X[col].replace([np.inf, -np.inf], 0).clip(lower=0)
 
-        # Encoder catégorielles avec encodages de 2024
+        # Convertir catégorielles en string AVANT les calculs
         categorical_cols = ['Marché', 'Segment', 'Famille Produit', 'Catégorie', 'Sous-catégorie']
+        for col in categorical_cols:
+            if col in X.columns:
+                X[col] = X[col].astype(str).fillna('UNKNOWN')
 
+        # Encoder fréquences avec encodages de 2024
         for col in categorical_cols:
             if col in X.columns and col in self.categorical_encodings:
-                # Convertir en string pour éviter les erreurs de type
-                X[col] = X[col].astype(str).fillna('UNKNOWN')
                 X[f'{col}_freq'] = X[col].map(self.categorical_encodings[col]).fillna(0)
 
         # Features
