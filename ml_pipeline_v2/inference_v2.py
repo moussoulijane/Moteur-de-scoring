@@ -142,6 +142,18 @@ def make_predictions(model, X_processed, threshold_low, threshold_high):
     # Probabilités
     y_prob = model.predict_proba(X_processed)[:, 1]
 
+    # DIAGNOSTIC: Afficher la distribution des probabilités
+    print(f"\n📊 Distribution des probabilités prédites:")
+    print(f"   Min        : {y_prob.min():.4f}")
+    print(f"   Percentile 25%: {np.percentile(y_prob, 25):.4f}")
+    print(f"   Médiane    : {np.median(y_prob):.4f}")
+    print(f"   Percentile 75%: {np.percentile(y_prob, 75):.4f}")
+    print(f"   Max        : {y_prob.max():.4f}")
+    print(f"   Moyenne    : {y_prob.mean():.4f}")
+    print(f"\n🎯 Seuils utilisés:")
+    print(f"   Seuil BAS  : {threshold_low:.4f}")
+    print(f"   Seuil HAUT : {threshold_high:.4f}")
+
     # 3 zones de décision
     decisions = []
     decisions_code = []
