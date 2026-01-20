@@ -134,17 +134,19 @@ class ModelComparisonV2:
         print("\n✅ Modèle CatBoost entraîné")
 
     def optimize_threshold_dual(self, y_prob, name):
-        """Optimiser 2 seuils pour créer 3 zones"""
-        print(f"\n🎯 Optimisation des seuils de décision (3 zones)...")
+        """Optimiser 2 seuils pour créer 3 zones avec taux d'automatisation élevé"""
+        print(f"\n🎯 Optimisation des seuils de décision (3 zones - taux automatisation élevé)...")
 
         montants_2025 = self.df_2025['Montant demandé'].values
         best_result = None
         best_gain_net = -float('inf')
+        best_result_relaxed = None
+        best_score_relaxed = -float('inf')
         threshold_results = []
 
-        # Tester différentes combinaisons de seuils
-        for t_low in np.arange(0.10, 0.50, 0.02):
-            for t_high in np.arange(0.50, 0.95, 0.02):
+        # Tester différentes combinaisons de seuils (plages élargies pour + d'automatisation)
+        for t_low in np.arange(0.05, 0.50, 0.02):  # Commence à 0.05 au lieu de 0.10
+            for t_high in np.arange(0.50, 0.98, 0.02):  # Va jusqu'à 0.98 au lieu de 0.95
                 if t_high <= t_low:
                     continue
 
@@ -206,16 +208,30 @@ class ModelComparisonV2:
                     'automation_rate': automation_rate
                 })
 
-                # Critère: Maximiser gain NET avec contraintes
-                if prec_rejet >= 0.95 and prec_validation >= 0.93:
+                # Critère principal: Maximiser gain NET avec contraintes assouplies
+                # (assouplies pour favoriser l'automatisation)
+                if prec_rejet >= 0.93 and prec_validation >= 0.90:  # Assouplies de 0.95/0.93
                     if gain_net > best_gain_net:
                         best_gain_net = gain_net
                         best_result = threshold_results[-1].copy()
 
-        # Fallback
-        if best_result is None and threshold_results:
-            best_result = max(threshold_results, key=lambda x: x['gain_net'])
-            print(f"   ⚠️ Aucune solution avec précisions cibles, utilisation du meilleur gain NET")
+                # Critère secondaire: Favoriser l'automatisation avec précisions minimales acceptables
+                if prec_rejet >= 0.90 and prec_validation >= 0.87:
+                    # Score composite: gain NET + bonus pour automatisation élevée
+                    score = gain_net + (automation_rate * 100000)  # Bonus pour automatisation
+                    if score > best_score_relaxed:
+                        best_score_relaxed = score
+                        best_result_relaxed = threshold_results[-1].copy()
+
+        # Choisir le meilleur résultat
+        if best_result is None and best_result_relaxed is not None:
+            best_result = best_result_relaxed
+            print(f"   ⚠️ Utilisation critère relaxed pour maximiser automatisation")
+        elif best_result is None and threshold_results:
+            # Fallback: meilleur compromis gain NET / automatisation
+            best_result = max(threshold_results,
+                            key=lambda x: x['gain_net'] + (x['automation_rate'] * 50000))
+            print(f"   ⚠️ Utilisation du meilleur compromis gain NET / automatisation")
 
         if best_result:
             print(f"   ✅ Seuil BAS (Rejet): {best_result['threshold_low']:.2f}")
@@ -223,7 +239,7 @@ class ModelComparisonV2:
             print(f"   ✅ Taux automatisation: {best_result['automation_rate']:.1%}")
             print(f"   ✅ Précision Rejet: {best_result['prec_rejet']:.1%}")
             print(f"   ✅ Précision Validation: {best_result['prec_validation']:.1%}")
-            print(f"   ✅ Gain NET max: {best_gain_net:,.0f} DH")
+            print(f"   ✅ Gain NET: {best_result['gain_net']:,.0f} DH")
         else:
             # Fallback ultime
             best_result = {
