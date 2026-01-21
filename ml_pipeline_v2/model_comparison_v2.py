@@ -94,8 +94,8 @@ class ModelComparisonV2:
         self.y_test = y_test
 
     def optimize_catboost(self):
-        """Optimiser CatBoost avec Optuna - modèle principal"""
-        print("\n🔬 Optimisation CatBoost (modèle principal)...")
+        """Optimiser CatBoost avec Optuna"""
+        print("\n🔬 Optimisation CatBoost...")
 
         def objective(trial):
             params = {
@@ -123,15 +123,48 @@ class ModelComparisonV2:
 
         return model
 
+    def optimize_xgboost(self):
+        """Optimiser XGBoost avec Optuna"""
+        print("\n🔬 Optimisation XGBoost...")
+
+        def objective(trial):
+            params = {
+                'n_estimators': trial.suggest_int('n_estimators', 100, 500),
+                'max_depth': trial.suggest_int('max_depth', 3, 10),
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
+                'subsample': trial.suggest_float('subsample', 0.6, 1.0),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
+                'reg_alpha': trial.suggest_float('reg_alpha', 1e-8, 10.0, log=True),
+                'reg_lambda': trial.suggest_float('reg_lambda', 1e-8, 10.0, log=True),
+            }
+
+            model = xgb.XGBClassifier(**params, random_state=42, n_jobs=-1, eval_metric='logloss')
+            cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+            scores = cross_val_score(model, self.X_train, self.y_train, cv=cv, scoring='f1', n_jobs=-1)
+
+            return scores.mean()
+
+        study = optuna.create_study(direction='maximize', sampler=optuna.samplers.TPESampler(seed=42))
+        study.optimize(objective, n_trials=50, show_progress_bar=False)
+
+        best_params = study.best_params
+        print(f"   ✅ Best F1-Score CV: {study.best_value:.4f}")
+
+        model = xgb.XGBClassifier(**best_params, random_state=42, n_jobs=-1, eval_metric='logloss')
+        model.fit(self.X_train, self.y_train)
+
+        return model
+
     def train_models(self):
-        """Entraîner CatBoost uniquement (modèle principal)"""
+        """Entraîner XGBoost et CatBoost pour comparaison"""
         print("\n" + "="*80)
-        print("🎯 ENTRAÎNEMENT DU MODÈLE")
+        print("🎯 ENTRAÎNEMENT DES MODÈLES")
         print("="*80)
 
+        self.models['XGBoost'] = self.optimize_xgboost()
         self.models['CatBoost'] = self.optimize_catboost()
 
-        print("\n✅ Modèle CatBoost entraîné")
+        print("\n✅ Modèles entraînés: XGBoost, CatBoost")
 
     def optimize_threshold_dual(self, y_prob, name):
         """Optimiser 2 seuils pour créer 3 zones avec taux d'automatisation élevé"""
@@ -325,16 +358,40 @@ class ModelComparisonV2:
             }
 
     def save_models(self):
-        """Sauvegarder le modèle et le preprocessor"""
-        print("\n💾 Sauvegarde du modèle...")
+        """Sauvegarder les modèles et le preprocessor"""
+        print("\n💾 Sauvegarde des modèles...")
 
         output_dir = Path('outputs/production_v2/models')
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Déterminer le meilleur modèle basé sur le gain NET
+        best_model_name = max(self.results.items(), key=lambda x: x[1]['gain_net'])[0]
+        print(f"\n🏆 Meilleur modèle (gain NET): {best_model_name}")
+        print(f"   Gain NET: {self.results[best_model_name]['gain_net']:,.0f} DH")
+        print(f"   Taux automatisation: {self.results[best_model_name]['auto'] / len(self.y_test):.1%}")
+
+        # Sauvegarder XGBoost
+        xgb_path = output_dir / 'xgboost_model_v2.pkl'
+        joblib.dump(self.models['XGBoost'], xgb_path)
+        print(f"✅ XGBoost sauvegardé: {xgb_path}")
+
         # Sauvegarder CatBoost
-        model_path = output_dir / 'catboost_model_v2.pkl'
-        joblib.dump(self.models['CatBoost'], model_path)
-        print(f"✅ CatBoost sauvegardé: {model_path}")
+        catboost_path = output_dir / 'catboost_model_v2.pkl'
+        joblib.dump(self.models['CatBoost'], catboost_path)
+        print(f"✅ CatBoost sauvegardé: {catboost_path}")
+
+        # Sauvegarder le meilleur modèle sous un nom générique
+        best_model_path = output_dir / 'best_model_v2.pkl'
+        joblib.dump(self.models[best_model_name], best_model_path)
+        print(f"✅ Meilleur modèle sauvegardé: {best_model_path}")
+
+        # Sauvegarder info sur le meilleur modèle
+        best_info_path = output_dir / 'best_model_info.txt'
+        with open(best_info_path, 'w') as f:
+            f.write(f"Meilleur modèle: {best_model_name}\n")
+            f.write(f"Gain NET: {self.results[best_model_name]['gain_net']:,.0f} DH\n")
+            f.write(f"Seuil BAS: {self.results[best_model_name]['threshold_low']:.4f}\n")
+            f.write(f"Seuil HAUT: {self.results[best_model_name]['threshold_high']:.4f}\n")
 
         # Sauvegarder le preprocessor
         preprocessor_path = output_dir / 'preprocessor_v2.pkl'
@@ -344,19 +401,29 @@ class ModelComparisonV2:
         print(f"\n📂 Modèles disponibles pour l'inférence dans: {output_dir}")
 
     def save_predictions(self):
-        """Sauvegarder les prédictions"""
+        """Sauvegarder les prédictions des deux modèles"""
         print("\n💾 Sauvegarde des prédictions...")
 
         output_dir = Path('outputs/production_v2/predictions')
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Déterminer le meilleur modèle
+        best_model_name = max(self.results.items(), key=lambda x: x[1]['gain_net'])[0]
+
         predictions_data = {
+            'XGBoost': {
+                'y_pred': self.results['XGBoost']['y_pred'],
+                'y_prob': self.results['XGBoost']['y_prob'],
+                'threshold_low': self.results['XGBoost']['threshold_low'],
+                'threshold_high': self.results['XGBoost']['threshold_high']
+            },
             'CatBoost': {
                 'y_pred': self.results['CatBoost']['y_pred'],
                 'y_prob': self.results['CatBoost']['y_prob'],
                 'threshold_low': self.results['CatBoost']['threshold_low'],
                 'threshold_high': self.results['CatBoost']['threshold_high']
             },
+            'best_model': best_model_name,
             'y_true': self.y_test
         }
 
@@ -364,17 +431,21 @@ class ModelComparisonV2:
         joblib.dump(predictions_data, predictions_path)
 
         print(f"✅ Prédictions sauvegardées: {predictions_path}")
+        print(f"   Meilleur modèle: {best_model_name}")
 
     def generate_report(self):
-        """Générer rapport texte"""
+        """Générer rapport texte comparatif"""
         output_dir = Path('outputs/production_v2')
         output_dir.mkdir(parents=True, exist_ok=True)
 
         report_path = output_dir / 'rapport_v2.txt'
 
+        # Déterminer le meilleur modèle
+        best_model_name = max(self.results.items(), key=lambda x: x[1]['gain_net'])[0]
+
         with open(report_path, 'w', encoding='utf-8') as f:
             f.write("="*80 + "\n")
-            f.write("RAPPORT MODÈLE V2 - FEATURES PRODUCTION-READY\n")
+            f.write("RAPPORT COMPARAISON MODÈLES V2 - FEATURES PRODUCTION-READY\n")
             f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write("="*80 + "\n\n")
 
@@ -394,14 +465,15 @@ class ModelComparisonV2:
             f.write(f"- Sous-catégories avec taux fondée: {info['subcategory_stats_count']}\n")
             f.write(f"- Segments avec taux fondée: {info['segment_stats_count']}\n\n")
 
+            # XGBoost
             f.write("="*80 + "\n")
-            f.write("RÉSULTATS CatBoost\n")
+            f.write("RÉSULTATS XGBoost\n")
             f.write("="*80 + "\n\n")
 
-            r = self.results['CatBoost']
+            r = self.results['XGBoost']
             f.write(f"Seuils optimaux:\n")
-            f.write(f"  Seuil BAS (Rejet)      : {r['threshold_low']:.2f}\n")
-            f.write(f"  Seuil HAUT (Validation): {r['threshold_high']:.2f}\n\n")
+            f.write(f"  Seuil BAS (Rejet)      : {r['threshold_low']:.4f}\n")
+            f.write(f"  Seuil HAUT (Validation): {r['threshold_high']:.4f}\n\n")
 
             f.write(f"Métriques:\n")
             f.write(f"  Accuracy  : {r['accuracy']:.4f}\n")
@@ -412,7 +484,35 @@ class ModelComparisonV2:
 
             f.write(f"Performance financière:\n")
             f.write(f"  Gain NET  : {r['gain_net']:,.0f} DH\n")
-            f.write(f"  Cas auto  : {r['auto']}\n\n")
+            f.write(f"  Cas auto  : {r['auto']} ({r['auto']/len(self.y_test):.1%})\n\n")
+
+            # CatBoost
+            f.write("="*80 + "\n")
+            f.write("RÉSULTATS CatBoost\n")
+            f.write("="*80 + "\n\n")
+
+            r = self.results['CatBoost']
+            f.write(f"Seuils optimaux:\n")
+            f.write(f"  Seuil BAS (Rejet)      : {r['threshold_low']:.4f}\n")
+            f.write(f"  Seuil HAUT (Validation): {r['threshold_high']:.4f}\n\n")
+
+            f.write(f"Métriques:\n")
+            f.write(f"  Accuracy  : {r['accuracy']:.4f}\n")
+            f.write(f"  Precision : {r['precision']:.4f}\n")
+            f.write(f"  Recall    : {r['recall']:.4f}\n")
+            f.write(f"  F1-Score  : {r['f1']:.4f}\n")
+            f.write(f"  ROC-AUC   : {r['auc']:.4f}\n\n")
+
+            f.write(f"Performance financière:\n")
+            f.write(f"  Gain NET  : {r['gain_net']:,.0f} DH\n")
+            f.write(f"  Cas auto  : {r['auto']} ({r['auto']/len(self.y_test):.1%})\n\n")
+
+            # Meilleur modèle
+            f.write("="*80 + "\n")
+            f.write(f"🏆 MEILLEUR MODÈLE: {best_model_name}\n")
+            f.write("="*80 + "\n")
+            f.write(f"Critère: Gain NET maximal\n")
+            f.write(f"Gain NET: {self.results[best_model_name]['gain_net']:,.0f} DH\n\n")
 
         print(f"   ✅ Rapport sauvegardé: {report_path}")
 
@@ -428,12 +528,30 @@ class ModelComparisonV2:
         self.save_predictions()
         self.generate_report()
 
+        # Déterminer le meilleur modèle
+        best_model_name = max(self.results.items(), key=lambda x: x[1]['gain_net'])[0]
+
         print("\n" + "="*80)
-        print("✅ ENTRAÎNEMENT V2 TERMINÉ")
+        print("✅ COMPARAISON MODÈLES V2 TERMINÉE")
         print("="*80)
+        print(f"\n📊 RÉSULTATS COMPARATIFS:")
+
+        print(f"\n🔹 XGBoost:")
+        print(f"   F1-Score: {self.results['XGBoost']['f1']:.4f}")
+        print(f"   Gain NET: {self.results['XGBoost']['gain_net']:,.0f} DH")
+        print(f"   Automatisation: {self.results['XGBoost']['auto']/len(self.y_test):.1%}")
+        print(f"   Seuils: [{self.results['XGBoost']['threshold_low']:.4f}, {self.results['XGBoost']['threshold_high']:.4f}]")
+
+        print(f"\n🔹 CatBoost:")
+        print(f"   F1-Score: {self.results['CatBoost']['f1']:.4f}")
+        print(f"   Gain NET: {self.results['CatBoost']['gain_net']:,.0f} DH")
+        print(f"   Automatisation: {self.results['CatBoost']['auto']/len(self.y_test):.1%}")
+        print(f"   Seuils: [{self.results['CatBoost']['threshold_low']:.4f}, {self.results['CatBoost']['threshold_high']:.4f}]")
+
+        print(f"\n🏆 MEILLEUR MODÈLE: {best_model_name}")
+        print(f"   Gain NET: {self.results[best_model_name]['gain_net']:,.0f} DH")
+
         print(f"\n📂 Résultats: outputs/production_v2/")
-        print(f"\n🏆 F1-Score: {self.results['CatBoost']['f1']:.4f}")
-        print(f"💰 Gain NET: {self.results['CatBoost']['gain_net']:,.0f} DH")
 
 
 if __name__ == '__main__':
