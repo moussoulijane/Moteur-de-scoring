@@ -37,6 +37,10 @@ class InferenceAnomalyAnalyzer:
         self.output_dir = Path('outputs/anomaly_analysis')
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.anomalies = []
+        self.model = None
+        self.preprocessor = None
+        self.feature_importances = None
+        self.global_stats = {}
 
     def run_inference_if_needed(self):
         """Faire l'inférence si les colonnes de décision sont manquantes"""
@@ -70,8 +74,8 @@ class InferenceAnomalyAnalyzer:
             )
 
         # Charger
-        model = joblib.load(model_path)
-        preprocessor = joblib.load(preprocessor_path)
+        self.model = joblib.load(model_path)
+        self.preprocessor = joblib.load(preprocessor_path)
         print("✅ Modèle et preprocessor chargés")
 
         # Charger seuils
@@ -92,12 +96,12 @@ class InferenceAnomalyAnalyzer:
 
         # Préprocessing
         print("\n🔄 Préprocessing des données...")
-        X = preprocessor.transform(self.df)
+        X = self.preprocessor.transform(self.df)
         print(f"✅ {X.shape[1]} features générées")
 
         # Prédiction
         print("\n🎯 Prédiction...")
-        y_prob = model.predict_proba(X)[:, 1]
+        y_prob = self.model.predict_proba(X)[:, 1]
 
         # Décisions
         decisions = []
@@ -119,6 +123,24 @@ class InferenceAnomalyAnalyzer:
         self.df['Decision_Code'] = decision_codes
 
         print("✅ Inférence terminée")
+
+    def load_model_if_needed(self):
+        """Charger le modèle et preprocessor si pas encore fait"""
+        if self.model is not None and self.preprocessor is not None:
+            return  # Déjà chargés
+
+        print("\n📂 Chargement du modèle pour explicabilité...")
+
+        model_path = Path('outputs/production_v2/models/best_model_v2.pkl')
+        preprocessor_path = Path('outputs/production_v2/models/preprocessor_v2.pkl')
+
+        if not model_path.exists() or not preprocessor_path.exists():
+            print("⚠️  Modèle non trouvé - explicabilité désactivée")
+            return
+
+        self.model = joblib.load(model_path)
+        self.preprocessor = joblib.load(preprocessor_path)
+        print("✅ Modèle chargé pour analyse d'explicabilité")
 
     def clean_numeric_columns(self):
         """Nettoyer les colonnes numériques (convertir texte -> float)"""
@@ -459,6 +481,184 @@ class InferenceAnomalyAnalyzer:
             for atype, count in sorted(anomaly_types.items(), key=lambda x: x[1], reverse=True):
                 print(f"   {atype:30s}: {count:5d}")
 
+    def explain_anomalies(self):
+        """Expliquer POURQUOI chaque anomalie a une probabilité élevée"""
+        print("\n" + "="*80)
+        print("🔍 EXPLICABILITÉ DES ANOMALIES")
+        print("="*80)
+
+        # Charger modèle si nécessaire
+        self.load_model_if_needed()
+
+        if self.model is None or self.preprocessor is None:
+            print("⚠️  Modèle non disponible - explicabilité impossible")
+            return
+
+        if len(self.anomalies) == 0:
+            print("⚠️  Aucune anomalie à expliquer")
+            return
+
+        # Obtenir feature importances
+        if hasattr(self.model, 'feature_importances_'):
+            importances = self.model.feature_importances_
+            # Les noms des features correspondent à la sortie du preprocessor
+            # On doit transformer une observation pour obtenir les noms
+            sample = self.df_after_rule.iloc[[0]].copy()
+            X_sample = self.preprocessor.transform(sample)
+            feature_names = X_sample.columns.tolist() if hasattr(X_sample, 'columns') else [f'feature_{i}' for i in range(X_sample.shape[1])]
+
+            # Créer dict importance
+            feat_importance = dict(zip(feature_names, importances))
+            # Trier par importance
+            top_features = sorted(feat_importance.items(), key=lambda x: x[1], reverse=True)[:15]
+
+            print(f"\n📊 Top 15 features importantes du modèle:")
+            for feat, imp in top_features[:10]:
+                print(f"   {feat:40s}: {imp:.4f}")
+        else:
+            print("⚠️  Feature importances non disponibles")
+            top_features = []
+
+        # Calculer statistiques globales des validations vs rejets
+        df = self.df_after_rule.copy()
+        df_validation = df[df['Decision_Modele'] == 'Validation Auto'].copy()
+        df_rejet = df[df['Decision_Modele'] == 'Rejet Auto'].copy()
+
+        # Statistiques de base
+        base_cols = ['Montant demandé', 'Délai estimé', 'anciennete_annees',
+                    'PNB analytique (vision commerciale) cumulé']
+
+        stats_validation = {}
+        stats_rejet = {}
+
+        for col in base_cols:
+            if col in df.columns:
+                val_data = df_validation[col][df_validation[col] > 0] if len(df_validation) > 0 else pd.Series()
+                rej_data = df_rejet[col][df_rejet[col] > 0] if len(df_rejet) > 0 else pd.Series()
+
+                if len(val_data) > 0:
+                    stats_validation[col] = {
+                        'median': val_data.median(),
+                        'mean': val_data.mean(),
+                        'q25': val_data.quantile(0.25),
+                        'q75': val_data.quantile(0.75)
+                    }
+
+                if len(rej_data) > 0:
+                    stats_rejet[col] = {
+                        'median': rej_data.median(),
+                        'mean': rej_data.mean(),
+                        'q25': rej_data.quantile(0.25),
+                        'q75': rej_data.quantile(0.75)
+                    }
+
+        # Expliquer chaque anomalie
+        print(f"\n🔍 Analyse détaillée des {len(self.anomalies)} anomalies...")
+
+        explanations = []
+
+        for i, anomaly in enumerate(self.anomalies):
+            idx = anomaly['Index']
+
+            if idx not in self.df_after_rule.index:
+                continue
+
+            row = self.df_after_rule.loc[idx]
+
+            # Créer explication
+            explanation = {
+                'Index': idx,
+                'Type_Anomalie': anomaly['Type'],
+                'Probabilite': anomaly.get('Probabilite', row.get('Probabilite_Fondee', 0)),
+            }
+
+            # Ajouter données brutes
+            for col in base_cols:
+                if col in row.index:
+                    explanation[col] = row[col]
+
+            # Ajouter colonnes catégorielles
+            for col in ['Famille Produit', 'Catégorie', 'Sous-catégorie', 'Segment', 'Marché']:
+                if col in row.index:
+                    explanation[col] = row[col]
+
+            # Analyser les features engineered si possible
+            try:
+                X_row = self.preprocessor.transform(pd.DataFrame([row]))
+
+                # Identifier les features avec valeurs élevées
+                if hasattr(X_row, 'values'):
+                    row_values = X_row.values[0] if len(X_row.values) > 0 else []
+                    feature_names_list = X_row.columns.tolist() if hasattr(X_row, 'columns') else []
+
+                    # Pour les top features importantes, montrer les valeurs
+                    top_feat_values = []
+                    for feat_name, _ in top_features[:10]:
+                        if feat_name in feature_names_list:
+                            feat_idx = feature_names_list.index(feat_name)
+                            if feat_idx < len(row_values):
+                                top_feat_values.append(f"{feat_name}={row_values[feat_idx]:.2f}")
+
+                    explanation['Top_Features_Values'] = '; '.join(top_feat_values[:5])
+            except Exception as e:
+                explanation['Top_Features_Values'] = f"Erreur: {str(e)}"
+
+            # Construire explication textuelle
+            reasons = []
+
+            # Comparer avec médiane des validations
+            for col in base_cols:
+                if col in row.index and pd.notna(row[col]) and row[col] > 0:
+                    val = row[col]
+
+                    if col in stats_validation:
+                        median_val = stats_validation[col]['median']
+                        diff_pct = ((val - median_val) / median_val * 100) if median_val > 0 else 0
+
+                        if abs(diff_pct) > 50:
+                            direction = "supérieur" if diff_pct > 0 else "inférieur"
+                            reasons.append(f"{col} {direction} de {abs(diff_pct):.0f}% vs médiane validations ({median_val:,.0f})")
+
+                    # Comparer avec rejets
+                    if col in stats_rejet:
+                        median_rej = stats_rejet[col]['median']
+                        if col == 'Montant demandé' and val < median_rej * 0.5:
+                            reasons.append(f"Montant très faible vs rejets (médiane rejets: {median_rej:,.0f})")
+                        elif col == 'PNB analytique (vision commerciale) cumulé' and val > median_rej * 2:
+                            reasons.append(f"PNB élevé vs rejets (médiane rejets: {median_rej:,.0f})")
+
+            # Raisons spécifiques basées sur les taux de fondée (si catégories connues)
+            if 'Famille Produit' in row.index and pd.notna(row['Famille Produit']):
+                famille = row['Famille Produit']
+                reasons.append(f"Famille: {famille}")
+
+            if 'Catégorie' in row.index and pd.notna(row['Catégorie']):
+                categorie = row['Catégorie']
+                reasons.append(f"Catégorie: {categorie}")
+
+            explanation['Explication_Detaillee'] = ' | '.join(reasons) if reasons else "Analyse en cours"
+
+            explanations.append(explanation)
+
+        # Stocker les explications
+        self.anomaly_explanations = explanations
+
+        print(f"✅ {len(explanations)} anomalies expliquées")
+
+        # Afficher quelques exemples
+        if len(explanations) > 0:
+            print(f"\n📋 Exemple d'explications (5 premières):")
+            for i, exp in enumerate(explanations[:5], 1):
+                print(f"\n{i}. Index {exp['Index']} - Type: {exp['Type_Anomalie']}")
+                print(f"   Probabilité: {exp['Probabilite']:.4f}")
+                if 'Montant demandé' in exp:
+                    print(f"   Montant: {exp['Montant demandé']:,.0f} DH")
+                if 'PNB analytique (vision commerciale) cumulé' in exp:
+                    print(f"   PNB: {exp['PNB analytique (vision commerciale) cumulé']:,.0f} DH")
+                if 'anciennete_annees' in exp:
+                    print(f"   Ancienneté: {exp['anciennete_annees']:.1f} ans")
+                print(f"   Explication: {exp['Explication_Detaillee'][:150]}")
+
     def visualize_anomalies(self):
         """Créer visualisations des anomalies"""
         print("\n" + "="*80)
@@ -701,7 +901,29 @@ class InferenceAnomalyAnalyzer:
             anomalies_path = self.output_dir / 'anomalies_list.xlsx'
             df_anomalies = pd.DataFrame(self.anomalies)
             df_anomalies.to_excel(anomalies_path, index=False)
-            print(f"✅ Liste anomalies: {anomalies_path}")
+            print(f"✅ Liste anomalies basique: {anomalies_path}")
+
+        # Export DÉTAILLÉ avec explications
+        if hasattr(self, 'anomaly_explanations') and len(self.anomaly_explanations) > 0:
+            explanations_path = self.output_dir / f'anomalies_detaillees_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+            df_explanations = pd.DataFrame(self.anomaly_explanations)
+
+            # Créer fichier Excel avec formatage
+            with pd.ExcelWriter(explanations_path, engine='openpyxl') as writer:
+                df_explanations.to_excel(writer, sheet_name='Anomalies Détaillées', index=False)
+
+                # Ajuster les largeurs de colonnes
+                worksheet = writer.sheets['Anomalies Détaillées']
+                for idx, col in enumerate(df_explanations.columns):
+                    max_length = max(
+                        df_explanations[col].astype(str).map(len).max(),
+                        len(col)
+                    )
+                    adjusted_width = min(max_length + 2, 80)
+                    worksheet.column_dimensions[chr(65 + idx)].width = adjusted_width
+
+            print(f"✅ Liste DÉTAILLÉE avec explications: {explanations_path}")
+            print(f"   📋 Contient: Type anomalie, Probabilité, Montant, PNB, Ancienneté, Famille, Catégorie, Explication détaillée")
 
     def run(self):
         """Exécuter l'analyse complète"""
@@ -709,6 +931,7 @@ class InferenceAnomalyAnalyzer:
         self.apply_business_rule()
         stats_comparison = self.analyze_validation_profiles()
         self.detect_anomalies()
+        self.explain_anomalies()  # NOUVEAU: Explicabilité détaillée
         self.visualize_anomalies()
         self.generate_report(stats_comparison)
 
@@ -717,6 +940,9 @@ class InferenceAnomalyAnalyzer:
         print("="*80)
         print(f"\n📂 Résultats dans: {self.output_dir}")
         print(f"📊 Anomalies détectées: {len(self.anomalies)}")
+        if hasattr(self, 'anomaly_explanations'):
+            print(f"📋 Explications générées: {len(self.anomaly_explanations)}")
+            print(f"\n💡 Consultez le fichier 'anomalies_detaillees_*.xlsx' pour voir les explications détaillées")
 
 
 def main():
