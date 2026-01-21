@@ -120,6 +120,69 @@ class InferenceAnomalyAnalyzer:
 
         print("✅ Inférence terminée")
 
+    def clean_numeric_columns(self):
+        """Nettoyer les colonnes numériques (convertir texte -> float)"""
+        import re
+
+        numeric_cols = ['Montant demandé', 'Délai estimé', 'anciennete_annees',
+                       'PNB analytique (vision commerciale) cumulé']
+
+        def clean_numeric_value(val):
+            """Convertir une valeur texte en float"""
+            if pd.isna(val):
+                return np.nan
+
+            if isinstance(val, (int, float)):
+                return float(val)
+
+            # Convertir en string
+            val_str = str(val).strip().upper()
+
+            # Supprimer currency symbols et texte
+            val_str = re.sub(r'(MAD|DH|DHs?|EUR|€|\$)', '', val_str, flags=re.IGNORECASE)
+            val_str = val_str.strip()
+
+            if not val_str or val_str == '':
+                return np.nan
+
+            # Remplacer les espaces (1 000 -> 1000)
+            val_str = val_str.replace(' ', '')
+
+            # Gérer format européen (1.500,50) vs anglais (1,500.50)
+            if ',' in val_str and '.' in val_str:
+                # Les deux présents - déterminer le format
+                comma_pos = val_str.rfind(',')
+                dot_pos = val_str.rfind('.')
+
+                if comma_pos > dot_pos:
+                    # Format européen: 1.500,50
+                    val_str = val_str.replace('.', '').replace(',', '.')
+                else:
+                    # Format anglais: 1,500.50
+                    val_str = val_str.replace(',', '')
+            elif ',' in val_str:
+                # Seule virgule présente
+                # Si 2 chiffres après -> décimal (1,50)
+                # Sinon -> séparateur milliers (1,500)
+                parts = val_str.split(',')
+                if len(parts[-1]) == 2:
+                    val_str = val_str.replace(',', '.')
+                else:
+                    val_str = val_str.replace(',', '')
+
+            try:
+                return float(val_str)
+            except:
+                return np.nan
+
+        print("\n🔄 Nettoyage des colonnes numériques...")
+        for col in numeric_cols:
+            if col in self.df.columns:
+                original_type = self.df[col].dtype
+                self.df[col] = self.df[col].apply(clean_numeric_value)
+                non_null = self.df[col].notna().sum()
+                print(f"   {col}: {non_null} valeurs valides (était {original_type})")
+
     def load_data(self):
         """Charger les résultats d'inférence"""
         print("\n" + "="*80)
@@ -128,6 +191,9 @@ class InferenceAnomalyAnalyzer:
 
         self.df = pd.read_excel(self.input_file)
         print(f"✅ {len(self.df)} réclamations chargées")
+
+        # Nettoyer les colonnes numériques AVANT inférence
+        self.clean_numeric_columns()
 
         # Vérifier et faire inférence si nécessaire
         self.run_inference_if_needed()
