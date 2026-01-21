@@ -4,7 +4,12 @@ Identifie les décisions suspectes après inférence pour détecter les incohér
 
 Usage:
     python ml_pipeline_v2/analyze_inference_anomalies.py --input_file predictions.xlsx
+
+    Si le fichier n'a pas encore été scoré, le script fera automatiquement l'inférence
 """
+import sys
+sys.path.append('src')
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -13,7 +18,11 @@ from pathlib import Path
 import argparse
 from datetime import datetime
 import warnings
+import joblib
 warnings.filterwarnings('ignore')
+
+# Import preprocessing
+from preprocessor_v2 import ProductionPreprocessorV2
 
 # Configuration
 sns.set_style('whitegrid')
@@ -29,20 +38,99 @@ class InferenceAnomalyAnalyzer:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.anomalies = []
 
+    def run_inference_if_needed(self):
+        """Faire l'inférence si les colonnes de décision sont manquantes"""
+        required_cols = ['Decision_Modele', 'Probabilite_Fondee']
+        missing = [c for c in required_cols if c not in self.df.columns]
+
+        if not missing:
+            return  # Les colonnes existent déjà
+
+        print("\n" + "="*80)
+        print("🔮 INFÉRENCE AUTOMATIQUE (colonnes manquantes)")
+        print("="*80)
+        print(f"   Colonnes manquantes: {missing}")
+        print("   Chargement du modèle et exécution de l'inférence...")
+
+        # Charger modèle et preprocessor
+        model_path = Path('outputs/production_v2/models/best_model_v2.pkl')
+        preprocessor_path = Path('outputs/production_v2/models/preprocessor_v2.pkl')
+        predictions_path = Path('outputs/production_v2/predictions/predictions_2025_v2.pkl')
+
+        if not model_path.exists():
+            raise FileNotFoundError(
+                f"Modèle non trouvé: {model_path}\n"
+                "Exécutez d'abord: python ml_pipeline_v2/model_comparison_v2.py"
+            )
+
+        if not preprocessor_path.exists():
+            raise FileNotFoundError(
+                f"Preprocessor non trouvé: {preprocessor_path}\n"
+                "Exécutez d'abord: python ml_pipeline_v2/model_comparison_v2.py"
+            )
+
+        # Charger
+        model = joblib.load(model_path)
+        preprocessor = joblib.load(preprocessor_path)
+        print("✅ Modèle et preprocessor chargés")
+
+        # Charger seuils
+        if predictions_path.exists():
+            predictions_data = joblib.load(predictions_path)
+            if 'best_model' in predictions_data:
+                best_name = predictions_data['best_model']
+                threshold_low = predictions_data[best_name]['threshold_low']
+                threshold_high = predictions_data[best_name]['threshold_high']
+            else:
+                threshold_low = 0.3
+                threshold_high = 0.7
+        else:
+            threshold_low = 0.3
+            threshold_high = 0.7
+
+        print(f"✅ Seuils: BAS={threshold_low:.4f}, HAUT={threshold_high:.4f}")
+
+        # Préprocessing
+        print("\n🔄 Préprocessing des données...")
+        X = preprocessor.transform(self.df)
+        print(f"✅ {X.shape[1]} features générées")
+
+        # Prédiction
+        print("\n🎯 Prédiction...")
+        y_prob = model.predict_proba(X)[:, 1]
+
+        # Décisions
+        decisions = []
+        decision_codes = []
+
+        for prob in y_prob:
+            if prob <= threshold_low:
+                decisions.append('Rejet Auto')
+                decision_codes.append(-1)
+            elif prob >= threshold_high:
+                decisions.append('Validation Auto')
+                decision_codes.append(1)
+            else:
+                decisions.append('Audit Humain')
+                decision_codes.append(0)
+
+        self.df['Probabilite_Fondee'] = y_prob
+        self.df['Decision_Modele'] = decisions
+        self.df['Decision_Code'] = decision_codes
+
+        print("✅ Inférence terminée")
+
     def load_data(self):
         """Charger les résultats d'inférence"""
         print("\n" + "="*80)
-        print("📂 CHARGEMENT DES DONNÉES D'INFÉRENCE")
+        print("📂 CHARGEMENT DES DONNÉES")
         print("="*80)
 
         self.df = pd.read_excel(self.input_file)
         print(f"✅ {len(self.df)} réclamations chargées")
 
-        # Vérifier colonnes nécessaires
-        required_cols = ['Decision_Modele', 'Probabilite_Fondee']
-        missing = [c for c in required_cols if c not in self.df.columns]
-        if missing:
-            raise ValueError(f"Colonnes manquantes: {missing}")
+        # Vérifier et faire inférence si nécessaire
+        self.run_inference_if_needed()
 
         # Statistiques initiales
         print("\n📊 Distribution des décisions AVANT règle métier:")
@@ -568,7 +656,7 @@ class InferenceAnomalyAnalyzer:
 def main():
     parser = argparse.ArgumentParser(description='Analyse des anomalies post-inférence')
     parser.add_argument('--input_file', type=str, required=True,
-                       help='Fichier Excel avec résultats d\'inférence (doit contenir Decision_Modele)')
+                       help='Fichier Excel (avec ou sans inférence - sera scoré automatiquement si nécessaire)')
 
     args = parser.parse_args()
 
