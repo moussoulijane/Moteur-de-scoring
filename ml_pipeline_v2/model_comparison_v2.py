@@ -452,9 +452,9 @@ class ModelComparisonV2:
             f.write("FEATURES UTILISÉES:\n")
             f.write("- Uniquement des colonnes disponibles en temps réel\n")
             f.write("- Montant demandé, Délai estimé, Famille Produit, Catégorie, Sous-catégorie\n")
-            f.write("- Segment, Marché, anciennete_annees\n")
+            f.write("- Segment, Marché, anciennete_annees, PNB cumulé (dernier semestre)\n")
             f.write("- Taux de fondée calculés sur 2024 (statistiquement renforcés)\n")
-            f.write("- Ratios, interactions, log transformations\n\n")
+            f.write("- Ratios, interactions, log transformations (incluant PNB)\n\n")
 
             info = self.preprocessor.get_feature_info()
             f.write(f"NOMBRE TOTAL DE FEATURES: {info['n_features']}\n\n")

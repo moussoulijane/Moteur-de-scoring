@@ -36,7 +36,8 @@ class DistributionShiftDiagnostic:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Colonnes importantes
-        self.numeric_cols = ['Montant demandé', 'Délai estimé', 'anciennete_annees']
+        self.numeric_cols = ['Montant demandé', 'Délai estimé', 'anciennete_annees',
+                            'PNB analytique (vision commerciale) cumulé']
         self.categorical_cols = ['Famille Produit', 'Catégorie', 'Sous-catégorie', 'Segment', 'Marché']
 
     def load_data(self):

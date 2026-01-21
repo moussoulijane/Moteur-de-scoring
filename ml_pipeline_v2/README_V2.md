@@ -17,6 +17,7 @@ Version améliorée du pipeline ML qui utilise **uniquement des features disponi
 - **Robustesse statistique** : seulement les catégories avec ≥30 cas
 - **Pas de colonnes "Unnamed"**
 - **Optimisé pour l'inférence temps réel**
+- **Inclut PNB cumulé** (du dernier semestre)
 
 ## 📊 Features utilisées
 
@@ -29,6 +30,7 @@ Version améliorée du pipeline ML qui utilise **uniquement des features disponi
 - `Segment` ✅
 - `Marché` ✅
 - `anciennete_annees` ✅
+- `PNB analytique (vision commerciale) cumulé` ✅ (dernier semestre)
 
 ### Features calculées (automatiques)
 
@@ -42,18 +44,23 @@ Calculés sur 2024 avec minimum 30 cas:
 
 #### 2. Écarts et ratios
 - `ecart_mediane_famille` - Écart du montant à la médiane de la famille
+- `ecart_pnb_mediane_famille` - Écart du PNB à la médiane de la famille
 - `ratio_montant_delai` - Montant / Délai
+- `ratio_montant_pnb` - Montant / PNB
 
 #### 3. Transformations log
 - `log_montant` - Log(1 + Montant demandé)
 - `log_delai` - Log(1 + Délai estimé)
 - `log_anciennete` - Log(1 + anciennete_annees)
+- `log_pnb` - Log(1 + PNB cumulé)
 
 #### 4. Interactions
 - `montant_x_anciennete` - Montant × Ancienneté
 - `delai_x_anciennete` - Délai × Ancienneté
 - `montant_x_delai` - Montant × Délai
+- `pnb_x_anciennete` - PNB × Ancienneté
 - `montant_x_taux_famille` - Montant × Taux de fondée famille
+- `pnb_x_taux_famille` - PNB × Taux de fondée famille
 
 #### 5. Fréquences catégorielles
 - `Marché_freq`
