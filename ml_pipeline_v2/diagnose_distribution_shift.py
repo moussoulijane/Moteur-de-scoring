@@ -52,6 +52,7 @@ class DistributionShiftDiagnostic:
         print(f"✅ Nouvelles données (inférence): {len(self.df_new)} lignes")
 
         # Nettoyer les colonnes numériques
+        from preprocessor_v2 import ProductionPreprocessorV2
         preprocessor = ProductionPreprocessorV2()
         for df in [self.df_ref, self.df_new]:
             for col in self.numeric_cols:
