@@ -198,13 +198,13 @@ def make_predictions(model, X_processed, threshold_low, threshold_high):
     for prob in y_prob:
         if prob <= threshold_low:
             decisions.append('Rejet Auto')
-            decisions_code.append(0)
+            decisions_code.append(-1)  # -1 pour rejet
         elif prob >= threshold_high:
             decisions.append('Validation Auto')
-            decisions_code.append(1)
+            decisions_code.append(1)  # 1 pour fondée
         else:
             decisions.append('Audit Humain')
-            decisions_code.append(-1)
+            decisions_code.append(0)  # 0 pour audit
 
     # Statistiques
     n_rejet = decisions.count('Rejet Auto')
@@ -266,7 +266,7 @@ def apply_business_rule(df_results):
 
     if n_changed > 0:
         df.loc[mask_to_audit, 'Decision_Modele'] = 'Audit Humain'
-        df.loc[mask_to_audit, 'Decision_Code'] = -1
+        df.loc[mask_to_audit, 'Decision_Code'] = 0  # 0 pour audit humain
 
         print(f"✅ Règle métier appliquée:")
         print(f"   {n_changed} validations converties en Audit Humain")
@@ -312,7 +312,7 @@ def export_results(df_original, df_processed, y_prob, decisions, decisions_code,
     print(f"   Colonnes ajoutées:")
     print(f"   - Probabilite_Fondee  : Probabilité prédite [0-1]")
     print(f"   - Decision_Modele     : Rejet Auto / Audit Humain / Validation Auto")
-    print(f"   - Decision_Code       : 0 / -1 / 1")
+    print(f"   - Decision_Code       : -1 (Rejet) / 0 (Audit) / 1 (Fondée)")
 
     return df_results
 
