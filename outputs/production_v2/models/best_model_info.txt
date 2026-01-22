@@ -1,0 +1,4 @@
+Meilleur modèle: XGBoost
+Gain NET: 1,351,940 DH
+Seuil BAS: 0.4300
+Seuil HAUT: 0.5000
