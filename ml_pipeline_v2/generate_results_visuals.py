@@ -388,6 +388,9 @@ MONTANTS:
                     f'{int(vol):,}', ha='center', va='bottom', fontweight='bold', fontsize=12)
 
         # 2. Taux de fondée comparaison
+        # Initialiser avec valeur par défaut
+        taux_fondee_2023 = 0.0
+
         if 'Fondée' in self.df_2023.columns:
             n_fondee_2023 = (self.df_2023['Fondée'] == 'Oui').sum() if 'Oui' in self.df_2023['Fondée'].values else (self.df_2023['Fondée'] == 1).sum()
             taux_fondee_2023 = 100 * n_fondee_2023 / len(self.df_2023)
