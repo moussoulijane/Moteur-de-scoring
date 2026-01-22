@@ -4,7 +4,12 @@ Crée des graphiques détaillés pour analyser les résultats du modèle sur 202
 
 Usage:
     python ml_pipeline_v2/generate_results_visuals.py --data_2025 predictions_2025.xlsx --data_2023 reclamations_2023.xlsx
+
+    Si les fichiers n'ont pas encore été scorés, le script fera automatiquement l'inférence
 """
+import sys
+sys.path.append('src')
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -13,7 +18,11 @@ from pathlib import Path
 import argparse
 from datetime import datetime
 import warnings
+import joblib
 warnings.filterwarnings('ignore')
+
+# Import preprocessing
+from preprocessor_v2 import ProductionPreprocessorV2
 
 # Configuration
 sns.set_style('whitegrid')
@@ -79,6 +88,106 @@ class ResultsVisualizer:
 
         return df[col].apply(clean_value)
 
+    def run_inference_if_needed(self, df, year):
+        """Faire l'inférence si les colonnes de décision sont manquantes"""
+        required_cols = ['Decision_Modele', 'Probabilite_Fondee']
+        missing = [c for c in required_cols if c not in df.columns]
+
+        if not missing:
+            return df  # Les colonnes existent déjà
+
+        print("\n" + "="*80)
+        print(f"🔮 INFÉRENCE AUTOMATIQUE {year} (colonnes manquantes: {', '.join(missing)})")
+        print("="*80)
+
+        # Chemins des modèles
+        model_path = Path('outputs/production_v2/models/best_model_v2.pkl')
+        preprocessor_path = Path('outputs/production_v2/models/preprocessor_v2.pkl')
+        predictions_path = Path('outputs/production_v2/predictions/predictions_2025_v2.pkl')
+
+        # Vérifier que les fichiers existent
+        if not model_path.exists():
+            print(f"❌ ERREUR: Modèle introuvable à {model_path}")
+            print("   Veuillez d'abord entraîner le modèle avec train_v2.py")
+            return df
+
+        if not preprocessor_path.exists():
+            print(f"❌ ERREUR: Preprocessor introuvable à {preprocessor_path}")
+            return df
+
+        # Charger modèle et preprocessor
+        print(f"\n📦 Chargement du modèle depuis {model_path}")
+        model = joblib.load(model_path)
+
+        print(f"📦 Chargement du preprocessor depuis {preprocessor_path}")
+        preprocessor = joblib.load(preprocessor_path)
+
+        # Charger seuils
+        threshold_low = 0.3
+        threshold_high = 0.7
+
+        if predictions_path.exists():
+            predictions_data = joblib.load(predictions_path)
+            if 'best_model' in predictions_data:
+                best_name = predictions_data['best_model']
+                if best_name in predictions_data:
+                    threshold_low = predictions_data[best_name].get('threshold_low', 0.3)
+                    threshold_high = predictions_data[best_name].get('threshold_high', 0.7)
+                    print(f"\n✅ Seuils chargés: low={threshold_low:.3f}, high={threshold_high:.3f}")
+
+        # Préprocessing
+        print(f"\n🔄 Préprocessing des données...")
+        try:
+            X = preprocessor.transform(df)
+            print(f"   ✅ Shape après preprocessing: {X.shape}")
+        except Exception as e:
+            print(f"❌ ERREUR lors du preprocessing: {e}")
+            return df
+
+        # Prédiction
+        print(f"\n🤖 Prédiction des probabilités...")
+        try:
+            y_prob = model.predict_proba(X)[:, 1]
+            print(f"   ✅ {len(y_prob)} probabilités calculées")
+        except Exception as e:
+            print(f"❌ ERREUR lors de la prédiction: {e}")
+            return df
+
+        # Décisions
+        print(f"\n📊 Génération des décisions...")
+        decisions = []
+        decision_codes = []
+
+        for prob in y_prob:
+            if prob <= threshold_low:
+                decisions.append('Rejet Auto')
+                decision_codes.append(-1)
+            elif prob >= threshold_high:
+                decisions.append('Validation Auto')
+                decision_codes.append(1)
+            else:
+                decisions.append('Audit Humain')
+                decision_codes.append(0)
+
+        # Compter les décisions
+        n_rejet = decision_codes.count(-1)
+        n_audit = decision_codes.count(0)
+        n_validation = decision_codes.count(1)
+
+        print(f"\n📈 Résultats de l'inférence:")
+        print(f"   • Rejet Auto:      {n_rejet:,} ({100*n_rejet/len(df):.1f}%)")
+        print(f"   • Audit Humain:    {n_audit:,} ({100*n_audit/len(df):.1f}%)")
+        print(f"   • Validation Auto: {n_validation:,} ({100*n_validation/len(df):.1f}%)")
+
+        # Ajouter colonnes au DataFrame
+        df['Probabilite_Fondee'] = y_prob
+        df['Decision_Modele'] = decisions
+        df['Decision_Code'] = decision_codes
+
+        print(f"✅ Colonnes ajoutées: Probabilite_Fondee, Decision_Modele, Decision_Code")
+
+        return df
+
     def load_data(self):
         """Charger et nettoyer les données"""
         print("\n📂 Chargement des données...")
@@ -103,6 +212,13 @@ class ResultsVisualizer:
                     if col in df.columns:
                         df[col] = self.clean_numeric_column(df, col)
                 print(f"   ✅ {year}: colonnes nettoyées")
+
+        # Faire l'inférence si nécessaire pour 2025
+        self.df_2025 = self.run_inference_if_needed(self.df_2025, 2025)
+
+        # Faire l'inférence si nécessaire pour 2023 (optionnel)
+        if self.df_2023 is not None:
+            self.df_2023 = self.run_inference_if_needed(self.df_2023, 2023)
 
     def plot_decisions_distribution_2025(self):
         """1. Distribution des décisions sur 2025"""
