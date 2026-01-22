@@ -1,0 +1,47 @@
+================================================================================
+RAPPORT DE PRÉSENTATION - OPÉRATIONNALISATION DU MODÈLE
+Date: 2026-01-22 20:26:16
+================================================================================
+
+📊 FICHIERS GÉNÉRÉS:
+--------------------------------------------------------------------------------
+1. 01_evolution_volume_montant.png - Évolution nombre et montant 2023-2025
+2. 02_fondee_vs_non_fondee.png - Analyse fondée vs non fondée
+3. 03_repartition_famille.png - Répartition par famille de produit
+4. 04_repartition_marche.png - Répartition par marché
+5. 05_architecture_modele.png - Architecture du modèle (3 piliers)
+6. 06_resultats_2025_gain.png - Résultats 2025 et calcul du gain
+
+🎯 STRUCTURE DE LA PRÉSENTATION:
+--------------------------------------------------------------------------------
+
+I. ÉTAT DES LIEUX (Slides 1-4)
+   • Évolution du volume et montant des réclamations
+   • Analyse fondée vs non fondée
+   • Répartition par famille
+   • Répartition par marché
+
+II. PRÉSENTATION DU MODÈLE (Slide 5)
+   • Architecture en 3 piliers:
+     1. Type de réclamation (Famille, Catégorie, Sous-catégorie)
+     2. Risque (Montant, Délai, Ratios)
+     3. Signalétique client (PNB, Ancienneté, Segment)
+
+   • Couche analytique:
+     - Modèles IA (XGBoost/CatBoost)
+     - Optimisation automatique des poids (Optuna)
+
+   • Couche décisionnelle:
+     - Décision modèle (3 zones)
+     - Règle métier #1: 1 validation/client/an
+     - Règle métier #2: Montant ≤ PNB année dernière
+
+III. RÉSULTATS 2025 & GAINS (Slide 6)
+   • Performance du modèle
+   • Calcul du gain financier
+   • Gain temps (ETP libérés)
+   • ROI et recommandations
+
+================================================================================
+TOUS LES GRAPHIQUES SONT PRÊTS POUR INTÉGRATION POWERPOINT
+================================================================================
