@@ -38,8 +38,8 @@ class ResultsVisualizer:
         self.output_dir = Path('outputs/results_analysis')
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Paramètres de gain
-        self.cout_traitement_manuel = 50  # DH par dossier
+        # Paramètres de gain (selon model_comparison_v2.py)
+        self.prix_unitaire = 169  # DH par dossier automatisé (PRIX_UNITAIRE_DH)
         self.temps_traitement_manuel = 30  # minutes
         self.temps_traitement_auto = 1  # minute
         self.heures_annuelles_fte = 1600  # heures/an
@@ -472,15 +472,15 @@ GAIN:
         plt.close()
 
     def plot_gain_calculation(self):
-        """3. Calcul détaillé des gains"""
-        print("\n📊 Graphique 3: Calcul des gains...")
+        """3. Calcul détaillé des gains avec logique GAIN NET"""
+        print("\n📊 Graphique 3: Calcul des gains (GAIN NET)...")
 
         if 'Decision_Modele' not in self.df_2025.columns:
             print("⚠️  Pas de décisions - Graphique ignoré")
             return
 
         fig = plt.figure(figsize=(18, 12))
-        fig.suptitle('CALCUL DÉTAILLÉ DES GAINS - 2025', fontsize=18, fontweight='bold', y=0.98)
+        fig.suptitle('CALCUL DÉTAILLÉ DES GAINS - 2025 (GAIN NET)', fontsize=18, fontweight='bold', y=0.98)
 
         n_total = len(self.df_2025)
         n_rejet = (self.df_2025['Decision_Modele'] == 'Rejet Auto').sum()
@@ -488,8 +488,49 @@ GAIN:
         n_validation = (self.df_2025['Decision_Modele'] == 'Validation Auto').sum()
         n_auto = n_rejet + n_validation
 
-        # Calculs
-        gain_financier = n_auto * self.cout_traitement_manuel
+        # Calcul GAIN NET (selon model_comparison_v2.py)
+        gain_brut = n_auto * self.prix_unitaire
+
+        # Calculer FP et FN si "Fondée" disponible
+        perte_fp = 0
+        perte_fn = 0
+        n_fp = 0
+        n_fn = 0
+
+        if 'Fondée' in self.df_2025.columns and 'Montant demandé' in self.df_2025.columns:
+            # Préparer données
+            df_temp = self.df_2025.copy()
+            df_temp['Fondee_bool'] = df_temp['Fondée'].apply(
+                lambda x: 1 if x in ['Oui', 1, True] else 0
+            )
+            df_temp['Prediction_bool'] = df_temp['Decision_Modele'].apply(
+                lambda x: 1 if x == 'Validation Auto' else 0
+            )
+
+            # Masques pour cas automatisés
+            mask_auto = (df_temp['Decision_Modele'] == 'Rejet Auto') | (df_temp['Decision_Modele'] == 'Validation Auto')
+            df_auto = df_temp[mask_auto]
+
+            # FP: Prédiction=1 mais Réalité=0 (accordé à tort)
+            fp_mask = (df_auto['Fondee_bool'] == 0) & (df_auto['Prediction_bool'] == 1)
+            # FN: Prédiction=0 mais Réalité=1 (refusé à tort)
+            fn_mask = (df_auto['Fondee_bool'] == 1) & (df_auto['Prediction_bool'] == 0)
+
+            n_fp = fp_mask.sum()
+            n_fn = fn_mask.sum()
+
+            # Nettoyer montants
+            montants_auto = df_auto['Montant demandé'].values
+            montants_clean = np.nan_to_num(montants_auto, nan=0.0, posinf=0.0, neginf=0.0)
+            montants_clean = np.clip(montants_clean, 0, np.percentile(montants_clean[montants_clean > 0], 99) if (montants_clean > 0).any() else 0)
+
+            # Calcul pertes
+            perte_fp = montants_clean[fp_mask.values].sum()
+            perte_fn = 2 * montants_clean[fn_mask.values].sum()  # Pénalité x2
+
+        gain_net = gain_brut - perte_fp - perte_fn
+
+        # Temps
         temps_economise_min = n_auto * (self.temps_traitement_manuel - self.temps_traitement_auto)
         temps_economise_h = temps_economise_min / 60
         etp_libere = temps_economise_h / self.heures_annuelles_fte
@@ -498,25 +539,26 @@ GAIN:
         temps_apres = n_audit * self.temps_traitement_manuel / 60 + n_auto * self.temps_traitement_auto / 60
         reduction_temps_pct = 100 * (temps_avant - temps_apres) / temps_avant
 
-        # 1. Gain financier
+        # 1. Gain NET détaillé
         ax1 = plt.subplot(2, 3, 1)
-        categories = ['Coût\navant', 'Coût\naprès', 'GAIN']
-        cout_avant = n_total * self.cout_traitement_manuel / 1e6
-        cout_apres = n_audit * self.cout_traitement_manuel / 1e6
-        gain_m = gain_financier / 1e6
+        categories = ['Gain\nBrut', 'Perte\nFP', 'Perte\nFN', 'GAIN\nNET']
+        values_m = [gain_brut/1e6, -perte_fp/1e6, -perte_fn/1e6, gain_net/1e6]
+        colors_bars = ['#2ECC71', '#E74C3C', '#E67E22', '#27AE60']
 
-        bars = ax1.bar(categories, [cout_avant, cout_apres, gain_m],
-                      color=['#E74C3C', '#F39C12', '#2ECC71'],
+        bars = ax1.bar(categories, values_m, color=colors_bars,
                       alpha=0.8, edgecolor='black', linewidth=2)
 
         ax1.set_ylabel('Millions DH', fontweight='bold', fontsize=12)
-        ax1.set_title('GAIN FINANCIER', fontweight='bold', fontsize=14)
+        ax1.set_title('GAIN NET (= Gain Brut - Pertes)', fontweight='bold', fontsize=14)
         ax1.grid(True, alpha=0.3, axis='y')
+        ax1.axhline(y=0, color='black', linestyle='-', linewidth=1)
 
-        for bar, val in zip(bars, [cout_avant, cout_apres, gain_m]):
+        for bar, val in zip(bars, values_m):
             height = bar.get_height()
-            ax1.text(bar.get_x() + bar.get_width()/2., height,
-                    f'{val:.2f}M', ha='center', va='bottom', fontweight='bold', fontsize=11)
+            va = 'bottom' if val >= 0 else 'top'
+            y_pos = height if val >= 0 else height
+            ax1.text(bar.get_x() + bar.get_width()/2., y_pos,
+                    f'{abs(val):.2f}M', ha='center', va=va, fontweight='bold', fontsize=10)
 
         # 2. Temps économisé
         ax2 = plt.subplot(2, 3, 2)
@@ -536,83 +578,84 @@ GAIN:
             ax2.text(bar.get_x() + bar.get_width()/2., height,
                     f'{val:,.0f}h', ha='center', va='bottom', fontweight='bold', fontsize=11)
 
-        # 3. ETP libérés
+        # 3. Récapitulatif GAIN NET
         ax3 = plt.subplot(2, 3, 3)
         ax3.axis('off')
 
-        etp_text = f"""
-👥 ETP LIBÉRÉS
+        recap_text = f"""
+💰 RÉCAPITULATIF GAIN NET 2025
 
-Temps économisé:
-  {temps_economise_h:,.0f} heures
+GAIN BRUT:
+  {n_auto:,} dossiers × {self.prix_unitaire} DH
+  = {gain_brut:,.0f} DH
 
-Équivalent ETP:
-  {etp_libere:.2f} ETP
+PERTES:
+  FP ({n_fp:,} cas): {perte_fp:,.0f} DH
+  FN ({n_fn:,} cas): {perte_fn:,.0f} DH
 
-(1 ETP = {self.heures_annuelles_fte}h/an)
+GAIN NET:
+  {gain_net:,.0f} DH
+  = {gain_net/1e6:.2f} M DH
 
-📊 Capacité libérée pour:
-  • Tâches à valeur ajoutée
-  • Amélioration continue
-  • Innovation
+TEMPS:
+  {etp_libere:.2f} ETP libérés
         """
 
-        ax3.text(0.1, 0.9, etp_text, transform=ax3.transAxes,
-                fontsize=13, verticalalignment='top', family='monospace',
+        ax3.text(0.05, 0.95, recap_text, transform=ax3.transAxes,
+                fontsize=11, verticalalignment='top', family='monospace',
                 bbox=dict(boxstyle='round', facecolor='#D5F4E6', alpha=0.9,
                          edgecolor='#2ECC71', linewidth=3))
 
-        # 4. Schéma explicatif du calcul
+        # 4. Schéma GAIN NET
         ax4 = plt.subplot(2, 3, 4)
         ax4.axis('off')
         ax4.set_xlim(0, 10)
         ax4.set_ylim(0, 10)
 
-        # Titre
-        ax4.text(5, 9, 'SCHÉMA DE CALCUL DU GAIN FINANCIER', ha='center',
+        ax4.text(5, 9.5, 'LOGIQUE DE CALCUL DU GAIN NET', ha='center',
                 fontsize=12, fontweight='bold')
 
-        # Box 1: Dossiers automatisés
-        rect1 = plt.Rectangle((1, 6), 3, 2, facecolor='#3498DB',
+        # Étape 1: Gain Brut
+        rect1 = plt.Rectangle((0.5, 7), 4, 1.5, facecolor='#2ECC71',
                               edgecolor='black', linewidth=2)
         ax4.add_patch(rect1)
-        ax4.text(2.5, 7.5, 'Dossiers\nautomatisés', ha='center', va='center',
+        ax4.text(2.5, 7.75, f'1. GAIN BRUT', ha='center', va='center',
                 fontsize=10, fontweight='bold', color='white')
-        ax4.text(2.5, 6.7, f'{n_auto:,}', ha='center', va='center',
-                fontsize=11, fontweight='bold', color='white')
+        ax4.text(2.5, 7.25, f'{n_auto:,} × {self.prix_unitaire} DH = {gain_brut/1e6:.2f}M', ha='center', va='center',
+                fontsize=9, fontweight='bold', color='white')
 
-        # Flèche
-        ax4.arrow(4.2, 7, 1, 0, head_width=0.3, head_length=0.3,
-                 fc='black', ec='black', linewidth=2)
-
-        # Box 2: Coût unitaire
-        rect2 = plt.Rectangle((5.5, 6), 3, 2, facecolor='#E67E22',
+        # Étape 2: Perte FP
+        rect2 = plt.Rectangle((5.5, 7), 4, 1.5, facecolor='#E74C3C',
                               edgecolor='black', linewidth=2)
         ax4.add_patch(rect2)
-        ax4.text(7, 7.5, 'Coût unitaire\névité', ha='center', va='center',
+        ax4.text(7.5, 7.75, f'2. PERTE FP', ha='center', va='center',
                 fontsize=10, fontweight='bold', color='white')
-        ax4.text(7, 6.7, f'{self.cout_traitement_manuel} DH', ha='center', va='center',
-                fontsize=11, fontweight='bold', color='white')
+        ax4.text(7.5, 7.25, f'{n_fp} cas × montants = {perte_fp/1e6:.2f}M', ha='center', va='center',
+                fontsize=9, fontweight='bold', color='white')
 
-        # Flèche vers résultat
-        ax4.arrow(2.5, 5.8, 0, -1.5, head_width=0.3, head_length=0.2,
-                 fc='black', ec='black', linewidth=2)
-        ax4.arrow(7, 5.8, 0, -1.5, head_width=0.3, head_length=0.2,
-                 fc='black', ec='black', linewidth=2)
-
-        # Opération
-        ax4.text(4.7, 5, '×', ha='center', va='center',
-                fontsize=24, fontweight='bold')
-
-        # Box résultat
-        rect3 = plt.Rectangle((2, 1.5), 6, 2, facecolor='#2ECC71',
-                              edgecolor='black', linewidth=3)
+        # Étape 3: Perte FN
+        rect3 = plt.Rectangle((0.5, 5), 4, 1.5, facecolor='#E67E22',
+                              edgecolor='black', linewidth=2)
         ax4.add_patch(rect3)
-        ax4.text(5, 3, 'GAIN FINANCIER TOTAL', ha='center', va='center',
-                fontsize=12, fontweight='bold', color='white')
-        ax4.text(5, 2.3, f'{gain_financier:,.0f} DH', ha='center', va='center',
+        ax4.text(2.5, 5.75, f'3. PERTE FN (×2)', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+        ax4.text(2.5, 5.25, f'{n_fn} cas × 2 × montants = {perte_fn/1e6:.2f}M', ha='center', va='center',
+                fontsize=9, fontweight='bold', color='white')
+
+        # Formule
+        ax4.text(5, 4, 'GAIN NET = Gain Brut - Perte FP - Perte FN', ha='center',
+                fontsize=10, fontweight='bold',
+                bbox=dict(boxstyle='round', facecolor='#ECF0F1', edgecolor='black', linewidth=2))
+
+        # Résultat final
+        rect_final = plt.Rectangle((1.5, 1.5), 7, 2, facecolor='#27AE60',
+                                   edgecolor='black', linewidth=3)
+        ax4.add_patch(rect_final)
+        ax4.text(5, 2.8, 'GAIN NET FINAL', ha='center', va='center',
+                fontsize=13, fontweight='bold', color='white')
+        ax4.text(5, 2.2, f'{gain_net:,.0f} DH', ha='center', va='center',
                 fontsize=14, fontweight='bold', color='white')
-        ax4.text(5, 1.8, f'= {gain_financier/1e6:.2f} Millions DH', ha='center', va='center',
+        ax4.text(5, 1.7, f'= {gain_net/1e6:.2f} Millions DH', ha='center', va='center',
                 fontsize=11, fontweight='bold', color='white')
 
         # 5. Schéma explicatif du temps
@@ -677,25 +720,25 @@ Temps économisé:
         roi_text = f"""
 💰 RETOUR SUR INVESTISSEMENT
 
-GAINS ANNUELS:
-  • Financier:    {gain_financier/1e6:.2f}M DH
-  • Temps:        {temps_economise_h:,.0f} heures
-  • ETP libérés:  {etp_libere:.2f}
+GAIN NET 2025:
+  • Gain Brut:    {gain_brut/1e6:.2f}M DH
+  • Perte FP:     {perte_fp/1e6:.2f}M DH
+  • Perte FN:     {perte_fn/1e6:.2f}M DH
+  • GAIN NET:     {gain_net/1e6:.2f}M DH
 
-PERFORMANCE:
-  • Taux automatisation: {100*(n_rejet+n_validation)/n_total:.1f}%
-  • Réduction temps:     {reduction_temps_pct:.1f}%
-  • Dossiers/jour gagnés: {n_auto/365:.0f}
+TEMPS & CAPACITÉ:
+  • Temps économisé:  {temps_economise_h:,.0f}h
+  • ETP libérés:      {etp_libere:.2f}
+  • Automatisation:   {100*n_auto/n_total:.1f}%
 
 IMPACT:
-  ✓ Délais réduits
-  ✓ Cohérence accrue
+  ✓ Cohérence des décisions
+  ✓ Réduction des erreurs
   ✓ Capacité libérée
-  ✓ Satisfaction client ↗
         """
 
         ax6.text(0.05, 0.95, roi_text, transform=ax6.transAxes,
-                fontsize=11, verticalalignment='top', family='monospace',
+                fontsize=10, verticalalignment='top', family='monospace',
                 bbox=dict(boxstyle='round', facecolor='#FEF9E7', alpha=0.9,
                          edgecolor='#F39C12', linewidth=2))
 
@@ -1065,8 +1108,8 @@ AUTOMATISATION:
         plt.close()
 
     def plot_gain_calculation_2023(self):
-        """6. Calcul des gains 2023 (si données disponibles)"""
-        print("\n📊 Graphique 6: Calcul des gains 2023...")
+        """6. Calcul des gains 2023 avec logique GAIN NET"""
+        print("\n📊 Graphique 6: Calcul des gains 2023 (GAIN NET)...")
 
         if self.df_2023 is None:
             print("⚠️  Données 2023 manquantes - Graphique ignoré")
@@ -1077,7 +1120,7 @@ AUTOMATISATION:
             return
 
         fig = plt.figure(figsize=(18, 12))
-        fig.suptitle('CALCUL DÉTAILLÉ DES GAINS - 2023', fontsize=18, fontweight='bold', y=0.98)
+        fig.suptitle('CALCUL DÉTAILLÉ DES GAINS - 2023 (GAIN NET)', fontsize=18, fontweight='bold', y=0.98)
 
         n_total = len(self.df_2023)
         n_rejet = (self.df_2023['Decision_Modele'] == 'Rejet Auto').sum()
@@ -1085,8 +1128,49 @@ AUTOMATISATION:
         n_validation = (self.df_2023['Decision_Modele'] == 'Validation Auto').sum()
         n_auto = n_rejet + n_validation
 
-        # Calculs
-        gain_financier = n_auto * self.cout_traitement_manuel
+        # Calcul GAIN NET (selon model_comparison_v2.py)
+        gain_brut = n_auto * self.prix_unitaire
+
+        # Calculer FP et FN si "Fondée" disponible
+        perte_fp = 0
+        perte_fn = 0
+        n_fp = 0
+        n_fn = 0
+
+        if 'Fondée' in self.df_2023.columns and 'Montant demandé' in self.df_2023.columns:
+            # Préparer données
+            df_temp = self.df_2023.copy()
+            df_temp['Fondee_bool'] = df_temp['Fondée'].apply(
+                lambda x: 1 if x in ['Oui', 1, True] else 0
+            )
+            df_temp['Prediction_bool'] = df_temp['Decision_Modele'].apply(
+                lambda x: 1 if x == 'Validation Auto' else 0
+            )
+
+            # Masques pour cas automatisés
+            mask_auto = (df_temp['Decision_Modele'] == 'Rejet Auto') | (df_temp['Decision_Modele'] == 'Validation Auto')
+            df_auto = df_temp[mask_auto]
+
+            # FP: Prédiction=1 mais Réalité=0 (accordé à tort)
+            fp_mask = (df_auto['Fondee_bool'] == 0) & (df_auto['Prediction_bool'] == 1)
+            # FN: Prédiction=0 mais Réalité=1 (refusé à tort)
+            fn_mask = (df_auto['Fondee_bool'] == 1) & (df_auto['Prediction_bool'] == 0)
+
+            n_fp = fp_mask.sum()
+            n_fn = fn_mask.sum()
+
+            # Nettoyer montants
+            montants_auto = df_auto['Montant demandé'].values
+            montants_clean = np.nan_to_num(montants_auto, nan=0.0, posinf=0.0, neginf=0.0)
+            montants_clean = np.clip(montants_clean, 0, np.percentile(montants_clean[montants_clean > 0], 99) if (montants_clean > 0).any() else 0)
+
+            # Calcul pertes
+            perte_fp = montants_clean[fp_mask.values].sum()
+            perte_fn = 2 * montants_clean[fn_mask.values].sum()  # Pénalité x2
+
+        gain_net = gain_brut - perte_fp - perte_fn
+
+        # Temps
         temps_economise_min = n_auto * (self.temps_traitement_manuel - self.temps_traitement_auto)
         temps_economise_h = temps_economise_min / 60
         etp_libere = temps_economise_h / self.heures_annuelles_fte
@@ -1095,25 +1179,26 @@ AUTOMATISATION:
         temps_apres = n_audit * self.temps_traitement_manuel / 60 + n_auto * self.temps_traitement_auto / 60
         reduction_temps_pct = 100 * (temps_avant - temps_apres) / temps_avant
 
-        # 1. Gain financier
+        # 1. Gain NET détaillé
         ax1 = plt.subplot(2, 3, 1)
-        categories = ['Coût\navant', 'Coût\naprès', 'GAIN']
-        cout_avant = n_total * self.cout_traitement_manuel / 1e6
-        cout_apres = n_audit * self.cout_traitement_manuel / 1e6
-        gain_m = gain_financier / 1e6
+        categories = ['Gain\nBrut', 'Perte\nFP', 'Perte\nFN', 'GAIN\nNET']
+        values_m = [gain_brut/1e6, -perte_fp/1e6, -perte_fn/1e6, gain_net/1e6]
+        colors_bars = ['#2ECC71', '#E74C3C', '#E67E22', '#27AE60']
 
-        bars = ax1.bar(categories, [cout_avant, cout_apres, gain_m],
-                      color=['#E74C3C', '#F39C12', '#2ECC71'],
+        bars = ax1.bar(categories, values_m, color=colors_bars,
                       alpha=0.8, edgecolor='black', linewidth=2)
 
         ax1.set_ylabel('Millions DH', fontweight='bold', fontsize=12)
-        ax1.set_title('GAIN FINANCIER 2023', fontweight='bold', fontsize=14)
+        ax1.set_title('GAIN NET 2023 (= Gain Brut - Pertes)', fontweight='bold', fontsize=14)
         ax1.grid(True, alpha=0.3, axis='y')
+        ax1.axhline(y=0, color='black', linestyle='-', linewidth=1)
 
-        for bar, val in zip(bars, [cout_avant, cout_apres, gain_m]):
+        for bar, val in zip(bars, values_m):
             height = bar.get_height()
-            ax1.text(bar.get_x() + bar.get_width()/2., height,
-                    f'{val:.2f}M', ha='center', va='bottom', fontweight='bold', fontsize=11)
+            va = 'bottom' if val >= 0 else 'top'
+            y_pos = height if val >= 0 else height
+            ax1.text(bar.get_x() + bar.get_width()/2., y_pos,
+                    f'{abs(val):.2f}M', ha='center', va=va, fontweight='bold', fontsize=10)
 
         # 2. Temps économisé
         ax2 = plt.subplot(2, 3, 2)
@@ -1133,82 +1218,84 @@ AUTOMATISATION:
             ax2.text(bar.get_x() + bar.get_width()/2., height,
                     f'{val:,.0f}h', ha='center', va='bottom', fontweight='bold', fontsize=11)
 
-        # 3. ETP libérés
+        # 3. Récapitulatif GAIN NET
         ax3 = plt.subplot(2, 3, 3)
         ax3.axis('off')
 
-        etp_text = f"""
-👥 ETP LIBÉRÉS 2023
+        recap_text = f"""
+💰 RÉCAPITULATIF GAIN NET 2023
 
-Temps économisé:
-  {temps_economise_h:,.0f} heures
+GAIN BRUT:
+  {n_auto:,} dossiers × {self.prix_unitaire} DH
+  = {gain_brut:,.0f} DH
 
-Équivalent ETP:
-  {etp_libere:.2f} ETP
+PERTES:
+  FP ({n_fp:,} cas): {perte_fp:,.0f} DH
+  FN ({n_fn:,} cas): {perte_fn:,.0f} DH
 
-(1 ETP = {self.heures_annuelles_fte}h/an)
+GAIN NET:
+  {gain_net:,.0f} DH
+  = {gain_net/1e6:.2f} M DH
 
-📊 Capacité libérée pour:
-  • Tâches à valeur ajoutée
-  • Amélioration continue
-  • Innovation
+TEMPS:
+  {etp_libere:.2f} ETP libérés
         """
 
-        ax3.text(0.1, 0.9, etp_text, transform=ax3.transAxes,
-                fontsize=13, verticalalignment='top', family='monospace',
+        ax3.text(0.05, 0.95, recap_text, transform=ax3.transAxes,
+                fontsize=11, verticalalignment='top', family='monospace',
                 bbox=dict(boxstyle='round', facecolor='#D5F4E6', alpha=0.9,
                          edgecolor='#2ECC71', linewidth=3))
 
-        # 4. Schéma calcul financier
+        # 4. Schéma GAIN NET
         ax4 = plt.subplot(2, 3, 4)
         ax4.axis('off')
         ax4.set_xlim(0, 10)
         ax4.set_ylim(0, 10)
 
-        ax4.text(5, 9, 'LOGIQUE DE CALCUL DU GAIN FINANCIER', ha='center',
+        ax4.text(5, 9.5, 'LOGIQUE DE CALCUL DU GAIN NET', ha='center',
                 fontsize=12, fontweight='bold')
 
-        # Box 1
-        rect1 = plt.Rectangle((1, 6), 3, 2, facecolor='#3498DB',
+        # Étape 1: Gain Brut
+        rect1 = plt.Rectangle((0.5, 7), 4, 1.5, facecolor='#2ECC71',
                               edgecolor='black', linewidth=2)
         ax4.add_patch(rect1)
-        ax4.text(2.5, 7.5, 'Dossiers\nautomatisés', ha='center', va='center',
+        ax4.text(2.5, 7.75, f'1. GAIN BRUT', ha='center', va='center',
                 fontsize=10, fontweight='bold', color='white')
-        ax4.text(2.5, 6.7, f'{n_auto:,}', ha='center', va='center',
-                fontsize=11, fontweight='bold', color='white')
+        ax4.text(2.5, 7.25, f'{n_auto:,} × {self.prix_unitaire} DH = {gain_brut/1e6:.2f}M', ha='center', va='center',
+                fontsize=9, fontweight='bold', color='white')
 
-        # Flèche
-        ax4.arrow(4.2, 7, 1, 0, head_width=0.3, head_length=0.3,
-                 fc='black', ec='black', linewidth=2)
-
-        # Box 2
-        rect2 = plt.Rectangle((5.5, 6), 3, 2, facecolor='#E67E22',
+        # Étape 2: Perte FP
+        rect2 = plt.Rectangle((5.5, 7), 4, 1.5, facecolor='#E74C3C',
                               edgecolor='black', linewidth=2)
         ax4.add_patch(rect2)
-        ax4.text(7, 7.5, 'Coût unitaire\névité', ha='center', va='center',
+        ax4.text(7.5, 7.75, f'2. PERTE FP', ha='center', va='center',
                 fontsize=10, fontweight='bold', color='white')
-        ax4.text(7, 6.7, f'{self.cout_traitement_manuel} DH', ha='center', va='center',
-                fontsize=11, fontweight='bold', color='white')
+        ax4.text(7.5, 7.25, f'{n_fp} cas × montants = {perte_fp/1e6:.2f}M', ha='center', va='center',
+                fontsize=9, fontweight='bold', color='white')
 
-        # Flèches vers résultat
-        ax4.arrow(2.5, 5.8, 0, -1.5, head_width=0.3, head_length=0.2,
-                 fc='black', ec='black', linewidth=2)
-        ax4.arrow(7, 5.8, 0, -1.5, head_width=0.3, head_length=0.2,
-                 fc='black', ec='black', linewidth=2)
-
-        # Opération
-        ax4.text(4.7, 5, '×', ha='center', va='center',
-                fontsize=24, fontweight='bold')
-
-        # Box résultat
-        rect3 = plt.Rectangle((2, 1.5), 6, 2, facecolor='#2ECC71',
-                              edgecolor='black', linewidth=3)
+        # Étape 3: Perte FN
+        rect3 = plt.Rectangle((0.5, 5), 4, 1.5, facecolor='#E67E22',
+                              edgecolor='black', linewidth=2)
         ax4.add_patch(rect3)
-        ax4.text(5, 3, 'GAIN FINANCIER', ha='center', va='center',
-                fontsize=12, fontweight='bold', color='white')
-        ax4.text(5, 2.3, f'{gain_financier:,.0f} DH', ha='center', va='center',
+        ax4.text(2.5, 5.75, f'3. PERTE FN (×2)', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+        ax4.text(2.5, 5.25, f'{n_fn} cas × 2 × montants = {perte_fn/1e6:.2f}M', ha='center', va='center',
+                fontsize=9, fontweight='bold', color='white')
+
+        # Formule
+        ax4.text(5, 4, 'GAIN NET = Gain Brut - Perte FP - Perte FN', ha='center',
+                fontsize=10, fontweight='bold',
+                bbox=dict(boxstyle='round', facecolor='#ECF0F1', edgecolor='black', linewidth=2))
+
+        # Résultat final
+        rect_final = plt.Rectangle((1.5, 1.5), 7, 2, facecolor='#27AE60',
+                                   edgecolor='black', linewidth=3)
+        ax4.add_patch(rect_final)
+        ax4.text(5, 2.8, 'GAIN NET FINAL', ha='center', va='center',
+                fontsize=13, fontweight='bold', color='white')
+        ax4.text(5, 2.2, f'{gain_net:,.0f} DH', ha='center', va='center',
                 fontsize=14, fontweight='bold', color='white')
-        ax4.text(5, 1.8, f'= {gain_financier/1e6:.2f} M DH', ha='center', va='center',
+        ax4.text(5, 1.7, f'= {gain_net/1e6:.2f} Millions DH', ha='center', va='center',
                 fontsize=11, fontweight='bold', color='white')
 
         # 5. Schéma calcul temps
@@ -1265,31 +1352,32 @@ Temps économisé:
         ax5.text(5, 1.4, f'GAIN: {temps_economise_h:,.0f}h = {etp_libere:.2f} ETP',
                 ha='center', va='center', fontsize=11, fontweight='bold', color='white')
 
-        # 6. Récap ROI
+        # 6. ROI et productivité
         ax6 = plt.subplot(2, 3, 6)
         ax6.axis('off')
 
         roi_text = f"""
-💰 RÉCAPITULATIF 2023
+💰 RETOUR SUR INVESTISSEMENT
 
-GAINS:
-  • Financier:    {gain_financier/1e6:.2f}M DH
-  • Temps:        {temps_economise_h:,.0f} heures
-  • ETP libérés:  {etp_libere:.2f}
+GAIN NET 2023:
+  • Gain Brut:    {gain_brut/1e6:.2f}M DH
+  • Perte FP:     {perte_fp/1e6:.2f}M DH
+  • Perte FN:     {perte_fn/1e6:.2f}M DH
+  • GAIN NET:     {gain_net/1e6:.2f}M DH
 
-PERFORMANCE:
-  • Automatisation: {100*n_auto/n_total:.1f}%
-  • Réduction temps: {reduction_temps_pct:.1f}%
-  • Dossiers/jour:   {n_auto/365:.0f}
+TEMPS & CAPACITÉ:
+  • Temps économisé:  {temps_economise_h:,.0f}h
+  • ETP libérés:      {etp_libere:.2f}
+  • Automatisation:   {100*n_auto/n_total:.1f}%
 
 IMPACT:
-  ✓ Délais réduits
-  ✓ Cohérence accrue
+  ✓ Cohérence des décisions
+  ✓ Réduction des erreurs
   ✓ Capacité libérée
         """
 
         ax6.text(0.05, 0.95, roi_text, transform=ax6.transAxes,
-                fontsize=11, verticalalignment='top', family='monospace',
+                fontsize=10, verticalalignment='top', family='monospace',
                 bbox=dict(boxstyle='round', facecolor='#FEF9E7', alpha=0.9,
                          edgecolor='#F39C12', linewidth=2))
 
@@ -1327,14 +1415,35 @@ IMPACT:
                 f.write(f"Validation Auto:       {n_validation:,} ({100*n_validation/n_total:.1f}%)\n")
                 f.write(f"Taux automatisation:   {100*n_auto/n_total:.1f}%\n\n")
 
-                # Gains 2025
-                gain_financier = n_auto * self.cout_traitement_manuel
+                # Gains 2025 - GAIN NET
+                gain_brut = n_auto * self.prix_unitaire
+                perte_fp = 0
+                perte_fn = 0
+
+                if 'Fondée' in self.df_2025.columns and 'Montant demandé' in self.df_2025.columns:
+                    df_temp = self.df_2025.copy()
+                    df_temp['Fondee_bool'] = df_temp['Fondée'].apply(lambda x: 1 if x in ['Oui', 1, True] else 0)
+                    df_temp['Prediction_bool'] = df_temp['Decision_Modele'].apply(lambda x: 1 if x == 'Validation Auto' else 0)
+                    mask_auto = (df_temp['Decision_Modele'] == 'Rejet Auto') | (df_temp['Decision_Modele'] == 'Validation Auto')
+                    df_auto = df_temp[mask_auto]
+                    fp_mask = (df_auto['Fondee_bool'] == 0) & (df_auto['Prediction_bool'] == 1)
+                    fn_mask = (df_auto['Fondee_bool'] == 1) & (df_auto['Prediction_bool'] == 0)
+                    montants_auto = df_auto['Montant demandé'].values
+                    montants_clean = np.nan_to_num(montants_auto, nan=0.0, posinf=0.0, neginf=0.0)
+                    montants_clean = np.clip(montants_clean, 0, np.percentile(montants_clean[montants_clean > 0], 99) if (montants_clean > 0).any() else 0)
+                    perte_fp = montants_clean[fp_mask.values].sum()
+                    perte_fn = 2 * montants_clean[fn_mask.values].sum()
+
+                gain_net = gain_brut - perte_fp - perte_fn
                 temps_economise_h = n_auto * (self.temps_traitement_manuel - self.temps_traitement_auto) / 60
                 etp_libere = temps_economise_h / self.heures_annuelles_fte
 
-                f.write("GAINS CALCULÉS 2025:\n")
+                f.write("GAINS CALCULÉS 2025 (GAIN NET):\n")
                 f.write("-" * 80 + "\n")
-                f.write(f"Gain financier:        {gain_financier:,.0f} DH ({gain_financier/1e6:.2f}M DH)\n")
+                f.write(f"Gain brut:             {gain_brut:,.0f} DH ({gain_brut/1e6:.2f}M DH)\n")
+                f.write(f"Perte FP:              {perte_fp:,.0f} DH ({perte_fp/1e6:.2f}M DH)\n")
+                f.write(f"Perte FN:              {perte_fn:,.0f} DH ({perte_fn/1e6:.2f}M DH)\n")
+                f.write(f"GAIN NET:              {gain_net:,.0f} DH ({gain_net/1e6:.2f}M DH)\n")
                 f.write(f"Temps économisé:       {temps_economise_h:,.0f} heures\n")
                 f.write(f"ETP libérés:           {etp_libere:.2f}\n\n")
 
@@ -1354,14 +1463,35 @@ IMPACT:
                 f.write(f"Validation Auto:       {n_validation_2023:,} ({100*n_validation_2023/n_total_2023:.1f}%)\n")
                 f.write(f"Taux automatisation:   {100*n_auto_2023/n_total_2023:.1f}%\n\n")
 
-                # Gains 2023
-                gain_financier_2023 = n_auto_2023 * self.cout_traitement_manuel
+                # Gains 2023 - GAIN NET
+                gain_brut_2023 = n_auto_2023 * self.prix_unitaire
+                perte_fp_2023 = 0
+                perte_fn_2023 = 0
+
+                if 'Fondée' in self.df_2023.columns and 'Montant demandé' in self.df_2023.columns:
+                    df_temp = self.df_2023.copy()
+                    df_temp['Fondee_bool'] = df_temp['Fondée'].apply(lambda x: 1 if x in ['Oui', 1, True] else 0)
+                    df_temp['Prediction_bool'] = df_temp['Decision_Modele'].apply(lambda x: 1 if x == 'Validation Auto' else 0)
+                    mask_auto = (df_temp['Decision_Modele'] == 'Rejet Auto') | (df_temp['Decision_Modele'] == 'Validation Auto')
+                    df_auto = df_temp[mask_auto]
+                    fp_mask = (df_auto['Fondee_bool'] == 0) & (df_auto['Prediction_bool'] == 1)
+                    fn_mask = (df_auto['Fondee_bool'] == 1) & (df_auto['Prediction_bool'] == 0)
+                    montants_auto = df_auto['Montant demandé'].values
+                    montants_clean = np.nan_to_num(montants_auto, nan=0.0, posinf=0.0, neginf=0.0)
+                    montants_clean = np.clip(montants_clean, 0, np.percentile(montants_clean[montants_clean > 0], 99) if (montants_clean > 0).any() else 0)
+                    perte_fp_2023 = montants_clean[fp_mask.values].sum()
+                    perte_fn_2023 = 2 * montants_clean[fn_mask.values].sum()
+
+                gain_net_2023 = gain_brut_2023 - perte_fp_2023 - perte_fn_2023
                 temps_economise_h_2023 = n_auto_2023 * (self.temps_traitement_manuel - self.temps_traitement_auto) / 60
                 etp_libere_2023 = temps_economise_h_2023 / self.heures_annuelles_fte
 
-                f.write("GAINS CALCULÉS 2023:\n")
+                f.write("GAINS CALCULÉS 2023 (GAIN NET):\n")
                 f.write("-" * 80 + "\n")
-                f.write(f"Gain financier:        {gain_financier_2023:,.0f} DH ({gain_financier_2023/1e6:.2f}M DH)\n")
+                f.write(f"Gain brut:             {gain_brut_2023:,.0f} DH ({gain_brut_2023/1e6:.2f}M DH)\n")
+                f.write(f"Perte FP:              {perte_fp_2023:,.0f} DH ({perte_fp_2023/1e6:.2f}M DH)\n")
+                f.write(f"Perte FN:              {perte_fn_2023:,.0f} DH ({perte_fn_2023/1e6:.2f}M DH)\n")
+                f.write(f"GAIN NET:              {gain_net_2023:,.0f} DH ({gain_net_2023/1e6:.2f}M DH)\n")
                 f.write(f"Temps économisé:       {temps_economise_h_2023:,.0f} heures\n")
                 f.write(f"ETP libérés:           {etp_libere_2023:.2f}\n\n")
 
