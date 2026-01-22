@@ -381,8 +381,8 @@ class PresentationGenerator:
         """4. Répartition par marché"""
         print("\n📊 Graphique 4: Répartition par marché...")
 
-        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-        fig.suptitle('RÉPARTITION PAR MARCHÉ', fontsize=16, fontweight='bold', y=0.98)
+        fig, axes = plt.subplots(2, 3, figsize=(20, 14))
+        fig.suptitle('RÉPARTITION PAR MARCHÉ', fontsize=18, fontweight='bold', y=0.97)
 
         datasets = [
             (2023, self.df_2023, 0),
@@ -398,33 +398,99 @@ class PresentationGenerator:
             ax1 = axes[0, col_idx]
             marche_counts = df['Marché'].value_counts()
 
-            colors = plt.cm.Pastel1(range(len(marche_counts)))
-            wedges, texts, autotexts = ax1.pie(marche_counts.values, labels=marche_counts.index,
-                                                autopct='%1.1f%%', colors=colors,
-                                                startangle=90, textprops={'fontsize': 10})
+            # Définir un seuil pour afficher les labels (au moins 2% du total)
+            total = marche_counts.sum()
+            threshold_pct = 2.0  # Afficher le label seulement si >= 2%
+
+            colors = plt.cm.Set3(range(len(marche_counts)))
+
+            def make_autopct(values):
+                def my_autopct(pct):
+                    # Afficher pourcentage seulement si >= threshold
+                    if pct >= threshold_pct:
+                        return f'{pct:.1f}%'
+                    else:
+                        return ''
+                return my_autopct
+
+            # Créer labels conditionnels
+            labels = []
+            for idx, (label, count) in enumerate(marche_counts.items()):
+                pct = 100 * count / total
+                if pct >= threshold_pct:
+                    labels.append(label)
+                else:
+                    labels.append('')  # Pas de label pour les petits segments
+
+            wedges, texts, autotexts = ax1.pie(marche_counts.values, labels=labels,
+                                                autopct=make_autopct(marche_counts.values),
+                                                colors=colors,
+                                                startangle=90,
+                                                textprops={'fontsize': 9},
+                                                pctdistance=0.85)
 
             for autotext in autotexts:
                 autotext.set_color('black')
                 autotext.set_fontweight('bold')
+                autotext.set_fontsize(9)
 
-            ax1.set_title(f'{year} - NOMBRE', fontweight='bold', fontsize=12)
+            # Meilleur positionnement des labels
+            for text in texts:
+                text.set_fontsize(8)
+                text.set_fontweight('bold')
+
+            ax1.set_title(f'{year} - NOMBRE', fontweight='bold', fontsize=13, pad=10)
+
+            # Ajouter une légende pour tous les segments
+            ax1.legend(wedges, [f"{name}: {count:,}" for name, count in marche_counts.items()],
+                      title="Marchés",
+                      loc="center left",
+                      bbox_to_anchor=(1, 0, 0.5, 1),
+                      fontsize=7,
+                      title_fontsize=8)
 
             # Montant (ligne 2)
             ax2 = axes[1, col_idx]
             if 'Montant demandé' in df.columns:
                 marche_montants = df.groupby('Marché')['Montant demandé'].sum()
+                total_montant = marche_montants.sum()
 
-                wedges, texts, autotexts = ax2.pie(marche_montants.values, labels=marche_montants.index,
-                                                    autopct='%1.1f%%', colors=colors,
-                                                    startangle=90, textprops={'fontsize': 10})
+                # Labels conditionnels pour montants
+                labels_mt = []
+                for idx, (label, montant) in enumerate(marche_montants.items()):
+                    pct = 100 * montant / total_montant if total_montant > 0 else 0
+                    if pct >= threshold_pct:
+                        labels_mt.append(label)
+                    else:
+                        labels_mt.append('')
+
+                wedges, texts, autotexts = ax2.pie(marche_montants.values, labels=labels_mt,
+                                                    autopct=make_autopct(marche_montants.values),
+                                                    colors=colors,
+                                                    startangle=90,
+                                                    textprops={'fontsize': 9},
+                                                    pctdistance=0.85)
 
                 for autotext in autotexts:
                     autotext.set_color('black')
                     autotext.set_fontweight('bold')
+                    autotext.set_fontsize(9)
 
-                ax2.set_title(f'{year} - MONTANT', fontweight='bold', fontsize=12)
+                for text in texts:
+                    text.set_fontsize(8)
+                    text.set_fontweight('bold')
 
-        plt.tight_layout()
+                ax2.set_title(f'{year} - MONTANT', fontweight='bold', fontsize=13, pad=10)
+
+                # Légende avec montants
+                ax2.legend(wedges, [f"{name}: {mt/1e6:.1f}M DH" for name, mt in marche_montants.items()],
+                          title="Marchés",
+                          loc="center left",
+                          bbox_to_anchor=(1, 0, 0.5, 1),
+                          fontsize=7,
+                          title_fontsize=8)
+
+        plt.tight_layout(rect=[0, 0, 0.98, 0.96])
         output_path = self.output_dir / '04_repartition_marche.png'
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         print(f"✅ Sauvegardé: {output_path}")
