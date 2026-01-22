@@ -35,6 +35,51 @@ class PresentationGenerator:
         print("📊 GÉNÉRATEUR DE VISUELS POUR PRÉSENTATION")
         print("="*80)
 
+    def clean_numeric_column(self, df, col):
+        """Nettoyer une colonne numérique (convertir texte -> float)"""
+        import re
+
+        def clean_value(val):
+            if pd.isna(val):
+                return np.nan
+            if isinstance(val, (int, float)):
+                return float(val)
+
+            # Convertir en string
+            val_str = str(val).strip().upper()
+
+            # Supprimer currency symbols
+            val_str = re.sub(r'(MAD|DH|DHs?|EUR|€|\$)', '', val_str, flags=re.IGNORECASE)
+            val_str = val_str.strip()
+
+            if not val_str or val_str == '':
+                return np.nan
+
+            # Remplacer espaces
+            val_str = val_str.replace(' ', '')
+
+            # Gérer formats
+            if ',' in val_str and '.' in val_str:
+                comma_pos = val_str.rfind(',')
+                dot_pos = val_str.rfind('.')
+                if comma_pos > dot_pos:
+                    val_str = val_str.replace('.', '').replace(',', '.')
+                else:
+                    val_str = val_str.replace(',', '')
+            elif ',' in val_str:
+                parts = val_str.split(',')
+                if len(parts[-1]) == 2:
+                    val_str = val_str.replace(',', '.')
+                else:
+                    val_str = val_str.replace(',', '')
+
+            try:
+                return float(val_str)
+            except:
+                return np.nan
+
+        return df[col].apply(clean_value)
+
     def load_data(self):
         """Charger les données des 3 années"""
         print("\n📂 Chargement des données...")
@@ -49,6 +94,18 @@ class PresentationGenerator:
             print(f"✅ 2024: {len(self.df_2024)} réclamations")
         if self.df_2025 is not None:
             print(f"✅ 2025: {len(self.df_2025)} réclamations")
+
+        # Nettoyer colonnes numériques
+        print("\n🔄 Nettoyage des colonnes numériques...")
+        numeric_cols = ['Montant demandé', 'Délai estimé', 'anciennete_annees',
+                       'PNB analytique (vision commerciale) cumulé']
+
+        for df, year in [(self.df_2023, 2023), (self.df_2024, 2024), (self.df_2025, 2025)]:
+            if df is not None:
+                for col in numeric_cols:
+                    if col in df.columns:
+                        df[col] = self.clean_numeric_column(df, col)
+                print(f"   ✅ {year}: colonnes nettoyées")
 
         # Ajouter année à chaque dataset
         if self.df_2023 is not None:
