@@ -891,6 +891,414 @@ Avantages:
         print(f"✅ Sauvegardé: {output_path}")
         plt.close()
 
+    def plot_performance_2023(self):
+        """5. Performance 2023 (si données disponibles)"""
+        print("\n📊 Graphique 5: Performance 2023...")
+
+        if self.df_2023 is None:
+            print("⚠️  Données 2023 manquantes - Graphique ignoré")
+            return
+
+        if 'Decision_Modele' not in self.df_2023.columns:
+            print("⚠️  Pas de décisions dans 2023 - Graphique ignoré")
+            return
+
+        fig = plt.figure(figsize=(18, 10))
+        fig.suptitle('PERFORMANCE DU MODÈLE SUR 2023', fontsize=18, fontweight='bold', y=0.98)
+
+        n_total = len(self.df_2023)
+        n_rejet = (self.df_2023['Decision_Modele'] == 'Rejet Auto').sum()
+        n_audit = (self.df_2023['Decision_Modele'] == 'Audit Humain').sum()
+        n_validation = (self.df_2023['Decision_Modele'] == 'Validation Auto').sum()
+
+        # 1. Pie chart des décisions
+        ax1 = plt.subplot(2, 3, 1)
+        sizes = [n_rejet, n_audit, n_validation]
+        labels = ['Rejet Auto', 'Audit Humain', 'Validation Auto']
+        colors = ['#E74C3C', '#F39C12', '#2ECC71']
+        explode = (0.05, 0.05, 0.1)
+
+        wedges, texts, autotexts = ax1.pie(sizes, explode=explode, labels=labels,
+                                            autopct='%1.1f%%', colors=colors,
+                                            shadow=True, startangle=90,
+                                            textprops={'fontsize': 11, 'weight': 'bold'})
+
+        for autotext in autotexts:
+            autotext.set_color('white')
+            autotext.set_fontsize(12)
+
+        ax1.set_title('Distribution des Décisions', fontweight='bold', fontsize=13)
+
+        # 2. Barres avec nombres
+        ax2 = plt.subplot(2, 3, 2)
+        bars = ax2.bar(labels, sizes, color=colors, alpha=0.8, edgecolor='black', linewidth=2)
+        ax2.set_ylabel('Nombre de réclamations', fontweight='bold', fontsize=11)
+        ax2.set_title('Nombre par Décision', fontweight='bold', fontsize=13)
+        ax2.grid(True, alpha=0.3, axis='y')
+
+        for bar, count in zip(bars, sizes):
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{int(count):,}', ha='center', va='bottom', fontweight='bold', fontsize=11)
+
+        # 3. Taux automatisation
+        ax3 = plt.subplot(2, 3, 3)
+        taux_auto = 100 * (n_rejet + n_validation) / n_total
+        taux_audit = 100 * n_audit / n_total
+
+        bars = ax3.barh(['Automatisé', 'Audit Humain'],
+                       [taux_auto, taux_audit],
+                       color=['#2ECC71', '#F39C12'], alpha=0.8, edgecolor='black', linewidth=2)
+
+        ax3.set_xlabel('Pourcentage (%)', fontweight='bold', fontsize=11)
+        ax3.set_title('Taux d\'Automatisation', fontweight='bold', fontsize=13)
+        ax3.grid(True, alpha=0.3, axis='x')
+
+        for bar in bars:
+            width = bar.get_width()
+            ax3.text(width + 1, bar.get_y() + bar.get_height()/2.,
+                    f'{width:.1f}%', ha='left', va='center', fontweight='bold', fontsize=11)
+
+        # 4. Matrice de confusion (si Fondée disponible)
+        ax4 = plt.subplot(2, 3, 4)
+        ax4.axis('off')
+
+        if 'Fondée' in self.df_2023.columns:
+            df_2023_copy = self.df_2023.copy()
+            df_2023_copy['Fondee_bool'] = df_2023_copy['Fondée'].apply(
+                lambda x: 1 if x in ['Oui', 1, True] else 0
+            )
+            df_2023_copy['Validation_bool'] = df_2023_copy['Decision_Modele'].apply(
+                lambda x: 1 if x == 'Validation Auto' else 0
+            )
+
+            vp = ((df_2023_copy['Fondee_bool'] == 1) & (df_2023_copy['Validation_bool'] == 1)).sum()
+            vn = ((df_2023_copy['Fondee_bool'] == 0) & (df_2023_copy['Validation_bool'] == 0)).sum()
+            fp = ((df_2023_copy['Fondee_bool'] == 0) & (df_2023_copy['Validation_bool'] == 1)).sum()
+            fn = ((df_2023_copy['Fondee_bool'] == 1) & (df_2023_copy['Validation_bool'] == 0)).sum()
+
+            precision = vp / (vp + fp) if (vp + fp) > 0 else 0
+            recall = vp / (vp + fn) if (vp + fn) > 0 else 0
+            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+
+            metrics_text = f"""
+📊 MÉTRIQUES DE PERFORMANCE 2023
+
+Matrice de confusion:
+  VP (Vrai Positif):    {vp:,}
+  VN (Vrai Négatif):    {vn:,}
+  FP (Faux Positif):    {fp:,}
+  FN (Faux Négatif):    {fn:,}
+
+Scores:
+  Précision: {100*precision:.1f}%
+  Rappel:    {100*recall:.1f}%
+  F1-Score:  {100*f1:.1f}%
+
+Exactitude:
+  {100*(vp+vn)/(vp+vn+fp+fn):.1f}%
+            """
+        else:
+            metrics_text = f"""
+📊 STATISTIQUES 2023
+
+Total: {n_total:,}
+
+Décisions:
+  Rejet:      {n_rejet:,}
+  Audit:      {n_audit:,}
+  Validation: {n_validation:,}
+
+Automatisation:
+  {taux_auto:.1f}%
+            """
+
+        ax4.text(0.05, 0.95, metrics_text, transform=ax4.transAxes,
+                fontsize=10, verticalalignment='top', family='monospace',
+                bbox=dict(boxstyle='round', facecolor='#EBF5FB', alpha=0.9,
+                         edgecolor='#3498DB', linewidth=2))
+
+        # 5. Distribution probabilités
+        ax5 = plt.subplot(2, 3, 5)
+        if 'Probabilite_Fondee' in self.df_2023.columns:
+            for decision, color in [('Rejet Auto', '#E74C3C'),
+                                    ('Audit Humain', '#F39C12'),
+                                    ('Validation Auto', '#2ECC71')]:
+                data = self.df_2023[self.df_2023['Decision_Modele'] == decision]['Probabilite_Fondee']
+                if len(data) > 0:
+                    ax5.hist(data, bins=30, alpha=0.6, label=decision, color=color)
+
+            ax5.set_xlabel('Probabilité Fondée', fontweight='bold', fontsize=11)
+            ax5.set_ylabel('Fréquence', fontweight='bold', fontsize=11)
+            ax5.set_title('Distribution des Probabilités', fontweight='bold', fontsize=13)
+            ax5.legend()
+            ax5.grid(True, alpha=0.3)
+
+        # 6. Statistiques récap
+        ax6 = plt.subplot(2, 3, 6)
+        ax6.axis('off')
+
+        stats_text = f"""
+📊 STATISTIQUES CLÉS 2023
+
+Total réclamations: {n_total:,}
+
+DÉCISIONS:
+  • Rejet Auto:      {n_rejet:,} ({100*n_rejet/n_total:.1f}%)
+  • Audit Humain:    {n_audit:,} ({100*n_audit/n_total:.1f}%)
+  • Validation Auto: {n_validation:,} ({100*n_validation/n_total:.1f}%)
+
+AUTOMATISATION:
+  • Taux: {taux_auto:.1f}%
+  • Dossiers automatisés: {n_rejet + n_validation:,}
+        """
+
+        ax6.text(0.1, 0.9, stats_text, transform=ax6.transAxes,
+                fontsize=11, verticalalignment='top', family='monospace',
+                bbox=dict(boxstyle='round', facecolor='#ECF0F1', alpha=0.8,
+                         edgecolor='black', linewidth=2))
+
+        plt.tight_layout()
+        output_path = self.output_dir / 'R5_performance_2023.png'
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"✅ Sauvegardé: {output_path}")
+        plt.close()
+
+    def plot_gain_calculation_2023(self):
+        """6. Calcul des gains 2023 (si données disponibles)"""
+        print("\n📊 Graphique 6: Calcul des gains 2023...")
+
+        if self.df_2023 is None:
+            print("⚠️  Données 2023 manquantes - Graphique ignoré")
+            return
+
+        if 'Decision_Modele' not in self.df_2023.columns:
+            print("⚠️  Pas de décisions dans 2023 - Graphique ignoré")
+            return
+
+        fig = plt.figure(figsize=(18, 12))
+        fig.suptitle('CALCUL DÉTAILLÉ DES GAINS - 2023', fontsize=18, fontweight='bold', y=0.98)
+
+        n_total = len(self.df_2023)
+        n_rejet = (self.df_2023['Decision_Modele'] == 'Rejet Auto').sum()
+        n_audit = (self.df_2023['Decision_Modele'] == 'Audit Humain').sum()
+        n_validation = (self.df_2023['Decision_Modele'] == 'Validation Auto').sum()
+        n_auto = n_rejet + n_validation
+
+        # Calculs
+        gain_financier = n_auto * self.cout_traitement_manuel
+        temps_economise_min = n_auto * (self.temps_traitement_manuel - self.temps_traitement_auto)
+        temps_economise_h = temps_economise_min / 60
+        etp_libere = temps_economise_h / self.heures_annuelles_fte
+
+        temps_avant = n_total * self.temps_traitement_manuel / 60
+        temps_apres = n_audit * self.temps_traitement_manuel / 60 + n_auto * self.temps_traitement_auto / 60
+        reduction_temps_pct = 100 * (temps_avant - temps_apres) / temps_avant
+
+        # 1. Gain financier
+        ax1 = plt.subplot(2, 3, 1)
+        categories = ['Coût\navant', 'Coût\naprès', 'GAIN']
+        cout_avant = n_total * self.cout_traitement_manuel / 1e6
+        cout_apres = n_audit * self.cout_traitement_manuel / 1e6
+        gain_m = gain_financier / 1e6
+
+        bars = ax1.bar(categories, [cout_avant, cout_apres, gain_m],
+                      color=['#E74C3C', '#F39C12', '#2ECC71'],
+                      alpha=0.8, edgecolor='black', linewidth=2)
+
+        ax1.set_ylabel('Millions DH', fontweight='bold', fontsize=12)
+        ax1.set_title('GAIN FINANCIER 2023', fontweight='bold', fontsize=14)
+        ax1.grid(True, alpha=0.3, axis='y')
+
+        for bar, val in zip(bars, [cout_avant, cout_apres, gain_m]):
+            height = bar.get_height()
+            ax1.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{val:.2f}M', ha='center', va='bottom', fontweight='bold', fontsize=11)
+
+        # 2. Temps économisé
+        ax2 = plt.subplot(2, 3, 2)
+        temps_data = ['Temps\navant', 'Temps\naprès', 'ÉCONOMIE']
+        temps_values = [temps_avant, temps_apres, temps_economise_h]
+
+        bars = ax2.bar(temps_data, temps_values,
+                      color=['#E74C3C', '#F39C12', '#2ECC71'],
+                      alpha=0.8, edgecolor='black', linewidth=2)
+
+        ax2.set_ylabel('Heures', fontweight='bold', fontsize=12)
+        ax2.set_title('GAIN TEMPS 2023', fontweight='bold', fontsize=14)
+        ax2.grid(True, alpha=0.3, axis='y')
+
+        for bar, val in zip(bars, temps_values):
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{val:,.0f}h', ha='center', va='bottom', fontweight='bold', fontsize=11)
+
+        # 3. ETP libérés
+        ax3 = plt.subplot(2, 3, 3)
+        ax3.axis('off')
+
+        etp_text = f"""
+👥 ETP LIBÉRÉS 2023
+
+Temps économisé:
+  {temps_economise_h:,.0f} heures
+
+Équivalent ETP:
+  {etp_libere:.2f} ETP
+
+(1 ETP = {self.heures_annuelles_fte}h/an)
+
+📊 Capacité libérée pour:
+  • Tâches à valeur ajoutée
+  • Amélioration continue
+  • Innovation
+        """
+
+        ax3.text(0.1, 0.9, etp_text, transform=ax3.transAxes,
+                fontsize=13, verticalalignment='top', family='monospace',
+                bbox=dict(boxstyle='round', facecolor='#D5F4E6', alpha=0.9,
+                         edgecolor='#2ECC71', linewidth=3))
+
+        # 4. Schéma calcul financier
+        ax4 = plt.subplot(2, 3, 4)
+        ax4.axis('off')
+        ax4.set_xlim(0, 10)
+        ax4.set_ylim(0, 10)
+
+        ax4.text(5, 9, 'LOGIQUE DE CALCUL DU GAIN FINANCIER', ha='center',
+                fontsize=12, fontweight='bold')
+
+        # Box 1
+        rect1 = plt.Rectangle((1, 6), 3, 2, facecolor='#3498DB',
+                              edgecolor='black', linewidth=2)
+        ax4.add_patch(rect1)
+        ax4.text(2.5, 7.5, 'Dossiers\nautomatisés', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+        ax4.text(2.5, 6.7, f'{n_auto:,}', ha='center', va='center',
+                fontsize=11, fontweight='bold', color='white')
+
+        # Flèche
+        ax4.arrow(4.2, 7, 1, 0, head_width=0.3, head_length=0.3,
+                 fc='black', ec='black', linewidth=2)
+
+        # Box 2
+        rect2 = plt.Rectangle((5.5, 6), 3, 2, facecolor='#E67E22',
+                              edgecolor='black', linewidth=2)
+        ax4.add_patch(rect2)
+        ax4.text(7, 7.5, 'Coût unitaire\névité', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+        ax4.text(7, 6.7, f'{self.cout_traitement_manuel} DH', ha='center', va='center',
+                fontsize=11, fontweight='bold', color='white')
+
+        # Flèches vers résultat
+        ax4.arrow(2.5, 5.8, 0, -1.5, head_width=0.3, head_length=0.2,
+                 fc='black', ec='black', linewidth=2)
+        ax4.arrow(7, 5.8, 0, -1.5, head_width=0.3, head_length=0.2,
+                 fc='black', ec='black', linewidth=2)
+
+        # Opération
+        ax4.text(4.7, 5, '×', ha='center', va='center',
+                fontsize=24, fontweight='bold')
+
+        # Box résultat
+        rect3 = plt.Rectangle((2, 1.5), 6, 2, facecolor='#2ECC71',
+                              edgecolor='black', linewidth=3)
+        ax4.add_patch(rect3)
+        ax4.text(5, 3, 'GAIN FINANCIER', ha='center', va='center',
+                fontsize=12, fontweight='bold', color='white')
+        ax4.text(5, 2.3, f'{gain_financier:,.0f} DH', ha='center', va='center',
+                fontsize=14, fontweight='bold', color='white')
+        ax4.text(5, 1.8, f'= {gain_financier/1e6:.2f} M DH', ha='center', va='center',
+                fontsize=11, fontweight='bold', color='white')
+
+        # 5. Schéma calcul temps
+        ax5 = plt.subplot(2, 3, 5)
+        ax5.axis('off')
+        ax5.set_xlim(0, 10)
+        ax5.set_ylim(0, 10)
+
+        ax5.text(5, 9, 'LOGIQUE DE CALCUL DU GAIN TEMPS', ha='center',
+                fontsize=12, fontweight='bold')
+
+        # Box temps manuel
+        rect1 = plt.Rectangle((1, 6), 3, 2, facecolor='#3498DB',
+                              edgecolor='black', linewidth=2)
+        ax5.add_patch(rect1)
+        ax5.text(2.5, 7.5, 'Temps manuel', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+        ax5.text(2.5, 6.7, f'{self.temps_traitement_manuel} min', ha='center', va='center',
+                fontsize=11, fontweight='bold', color='white')
+
+        # Box temps auto
+        rect2 = plt.Rectangle((5.5, 6), 3, 2, facecolor='#E67E22',
+                              edgecolor='black', linewidth=2)
+        ax5.add_patch(rect2)
+        ax5.text(7, 7.5, 'Temps auto', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+        ax5.text(7, 6.7, f'{self.temps_traitement_auto} min', ha='center', va='center',
+                fontsize=11, fontweight='bold', color='white')
+
+        # Gain par dossier
+        ax5.text(4.7, 5, '−', ha='center', va='center',
+                fontsize=24, fontweight='bold')
+
+        rect_diff = plt.Rectangle((2.5, 4), 5, 0.8, facecolor='#9B59B6',
+                                  edgecolor='black', linewidth=2)
+        ax5.add_patch(rect_diff)
+        ax5.text(5, 4.4, f'Gain/dossier: {self.temps_traitement_manuel - self.temps_traitement_auto} min',
+                ha='center', va='center', fontsize=10, fontweight='bold', color='white')
+
+        # Multiplication
+        ax5.arrow(5, 3.8, 0, -0.5, head_width=0.3, head_length=0.2,
+                 fc='black', ec='black', linewidth=2)
+
+        ax5.text(5, 3, '×', ha='center', va='center',
+                fontsize=20, fontweight='bold')
+
+        ax5.text(5, 2.5, f'{n_auto:,} dossiers', ha='center', va='center',
+                fontsize=10, fontweight='bold')
+
+        # Résultat
+        rect_res = plt.Rectangle((2, 1), 6, 0.8, facecolor='#2ECC71',
+                                 edgecolor='black', linewidth=3)
+        ax5.add_patch(rect_res)
+        ax5.text(5, 1.4, f'GAIN: {temps_economise_h:,.0f}h = {etp_libere:.2f} ETP',
+                ha='center', va='center', fontsize=11, fontweight='bold', color='white')
+
+        # 6. Récap ROI
+        ax6 = plt.subplot(2, 3, 6)
+        ax6.axis('off')
+
+        roi_text = f"""
+💰 RÉCAPITULATIF 2023
+
+GAINS:
+  • Financier:    {gain_financier/1e6:.2f}M DH
+  • Temps:        {temps_economise_h:,.0f} heures
+  • ETP libérés:  {etp_libere:.2f}
+
+PERFORMANCE:
+  • Automatisation: {100*n_auto/n_total:.1f}%
+  • Réduction temps: {reduction_temps_pct:.1f}%
+  • Dossiers/jour:   {n_auto/365:.0f}
+
+IMPACT:
+  ✓ Délais réduits
+  ✓ Cohérence accrue
+  ✓ Capacité libérée
+        """
+
+        ax6.text(0.05, 0.95, roi_text, transform=ax6.transAxes,
+                fontsize=11, verticalalignment='top', family='monospace',
+                bbox=dict(boxstyle='round', facecolor='#FEF9E7', alpha=0.9,
+                         edgecolor='#F39C12', linewidth=2))
+
+        plt.tight_layout()
+        output_path = self.output_dir / 'R6_gain_calculation_2023.png'
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"✅ Sauvegardé: {output_path}")
+        plt.close()
+
     def generate_summary_report(self):
         """Générer rapport texte"""
         print("\n📄 Génération du rapport récapitulatif...")
@@ -919,40 +1327,88 @@ Avantages:
                 f.write(f"Validation Auto:       {n_validation:,} ({100*n_validation/n_total:.1f}%)\n")
                 f.write(f"Taux automatisation:   {100*n_auto/n_total:.1f}%\n\n")
 
-                # Gains
+                # Gains 2025
                 gain_financier = n_auto * self.cout_traitement_manuel
                 temps_economise_h = n_auto * (self.temps_traitement_manuel - self.temps_traitement_auto) / 60
                 etp_libere = temps_economise_h / self.heures_annuelles_fte
 
-                f.write("GAINS CALCULÉS:\n")
+                f.write("GAINS CALCULÉS 2025:\n")
                 f.write("-" * 80 + "\n")
                 f.write(f"Gain financier:        {gain_financier:,.0f} DH ({gain_financier/1e6:.2f}M DH)\n")
                 f.write(f"Temps économisé:       {temps_economise_h:,.0f} heures\n")
                 f.write(f"ETP libérés:           {etp_libere:.2f}\n\n")
 
+            # Données 2023
+            if self.df_2023 is not None and 'Decision_Modele' in self.df_2023.columns:
+                n_total_2023 = len(self.df_2023)
+                n_rejet_2023 = (self.df_2023['Decision_Modele'] == 'Rejet Auto').sum()
+                n_audit_2023 = (self.df_2023['Decision_Modele'] == 'Audit Humain').sum()
+                n_validation_2023 = (self.df_2023['Decision_Modele'] == 'Validation Auto').sum()
+                n_auto_2023 = n_rejet_2023 + n_validation_2023
+
+                f.write("RÉSULTATS 2023:\n")
+                f.write("-" * 80 + "\n")
+                f.write(f"Total réclamations:    {n_total_2023:,}\n")
+                f.write(f"Rejet Auto:            {n_rejet_2023:,} ({100*n_rejet_2023/n_total_2023:.1f}%)\n")
+                f.write(f"Audit Humain:          {n_audit_2023:,} ({100*n_audit_2023/n_total_2023:.1f}%)\n")
+                f.write(f"Validation Auto:       {n_validation_2023:,} ({100*n_validation_2023/n_total_2023:.1f}%)\n")
+                f.write(f"Taux automatisation:   {100*n_auto_2023/n_total_2023:.1f}%\n\n")
+
+                # Gains 2023
+                gain_financier_2023 = n_auto_2023 * self.cout_traitement_manuel
+                temps_economise_h_2023 = n_auto_2023 * (self.temps_traitement_manuel - self.temps_traitement_auto) / 60
+                etp_libere_2023 = temps_economise_h_2023 / self.heures_annuelles_fte
+
+                f.write("GAINS CALCULÉS 2023:\n")
+                f.write("-" * 80 + "\n")
+                f.write(f"Gain financier:        {gain_financier_2023:,.0f} DH ({gain_financier_2023/1e6:.2f}M DH)\n")
+                f.write(f"Temps économisé:       {temps_economise_h_2023:,.0f} heures\n")
+                f.write(f"ETP libérés:           {etp_libere_2023:.2f}\n\n")
+
             f.write("FICHIERS GÉNÉRÉS:\n")
             f.write("-" * 80 + "\n")
-            f.write("1. R1_decisions_distribution_2025.png\n")
-            f.write("2. R2_comparison_2025_vs_2023.png\n")
-            f.write("3. R3_gain_calculation_detailed.png\n")
-            f.write("4. R4_performance_metrics_2025.png\n")
+            f.write("1. R1_decisions_distribution_2025.png - Décisions 2025\n")
+            f.write("2. R2_comparison_2025_vs_2023.png - Comparaison\n")
+            f.write("3. R3_gain_calculation_detailed.png - Gains 2025\n")
+            f.write("4. R4_performance_metrics_2025.png - Performance 2025\n")
+            f.write("5. R5_performance_2023.png - Performance 2023\n")
+            f.write("6. R6_gain_calculation_2023.png - Gains 2023\n")
 
         print(f"✅ Rapport sauvegardé: {report_path}")
 
     def run(self):
         """Exécuter la génération complète"""
         self.load_data()
+
+        # Graphiques 2025
         self.plot_decisions_distribution_2025()
-        if self.df_2023 is not None:
-            self.plot_comparison_2025_vs_2023()
         self.plot_gain_calculation()
         self.plot_performance_metrics_2025()
+
+        # Graphiques 2023 (si disponibles)
+        if self.df_2023 is not None:
+            self.plot_performance_2023()
+            self.plot_gain_calculation_2023()
+
+        # Comparaison
+        if self.df_2023 is not None:
+            self.plot_comparison_2025_vs_2023()
+
+        # Rapport
         self.generate_summary_report()
 
         print("\n" + "="*80)
         print("✅ GÉNÉRATION DES RÉSULTATS TERMINÉE")
         print("="*80)
         print(f"\n📂 Tous les fichiers sont dans: {self.output_dir}")
+        print("\nFichiers générés:")
+        print("  - R1: Distribution décisions 2025")
+        print("  - R2: Comparaison 2025 vs 2023")
+        print("  - R3: Gain détaillé 2025 (avec schémas)")
+        print("  - R4: Performance 2025")
+        if self.df_2023 is not None:
+            print("  - R5: Performance 2023")
+            print("  - R6: Gain détaillé 2023 (avec schémas)")
 
 
 def main():
