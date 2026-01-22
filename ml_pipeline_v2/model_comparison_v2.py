@@ -532,6 +532,33 @@ class ModelComparisonV2:
 
         print(f"   ✅ Rapport sauvegardé: {report_path}")
 
+    def generate_visualizations(self):
+        """Générer les visualisations avec les résultats du modèle"""
+        print("\n" + "="*80)
+        print("📊 GÉNÉRATION DES VISUALISATIONS")
+        print("="*80)
+
+        try:
+            # Import du visualizer
+            from visualize_from_model_comparison import VisualizerFromModelComparison
+
+            # Créer et exécuter le visualizer
+            visualizer = VisualizerFromModelComparison()
+            visualizer.load_predictions_and_data()
+            visualizer.apply_business_rules()
+
+            # Générer les 3 graphiques
+            visualizer.plot_accuracy_automation_families()
+            visualizer.plot_gain_montant_only()
+            visualizer.plot_business_rules_impact()
+
+            print("\n✅ Visualisations générées avec succès")
+            print(f"📂 Graphiques disponibles dans: {visualizer.output_dir}")
+
+        except Exception as e:
+            print(f"\n⚠️  Erreur lors de la génération des visualisations: {e}")
+            print("   Les modèles ont été sauvegardés correctement.")
+
     def run(self):
         """Exécution complète"""
         self.load_data()
@@ -569,6 +596,9 @@ class ModelComparisonV2:
         print(f"   Gain NET: {self.results[best_model_name]['gain_net']:,.0f} DH")
 
         print(f"\n📂 Résultats: outputs/production_v2/")
+
+        # Générer les visualisations automatiquement
+        self.generate_visualizations()
 
 
 if __name__ == '__main__':
