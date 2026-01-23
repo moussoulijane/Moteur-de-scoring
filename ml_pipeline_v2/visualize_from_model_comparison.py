@@ -237,15 +237,24 @@ class VisualizerFromModelComparison:
         n_auto = n_rejet + n_validation
         taux_auto = 100 * n_auto / n_total
 
-        # Accuracy globale
-        vp = ((df_copy['Fondee_bool'] == 1) & (df_copy['Validation_bool'] == 1)).sum()
-        vn = ((df_copy['Fondee_bool'] == 0) & (df_copy['Validation_bool'] == 0)).sum()
-        fp = ((df_copy['Fondee_bool'] == 0) & (df_copy['Validation_bool'] == 1)).sum()
-        fn = ((df_copy['Fondee_bool'] == 1) & (df_copy['Validation_bool'] == 0)).sum()
+        # IMPORTANT: Calculer les métriques UNIQUEMENT sur les cas AUTOMATISÉS
+        # (même logique que model_comparison_v2.py lignes 330-338)
+        mask_auto = (df_copy['Decision_Modele'] == 'Rejet Auto') | (df_copy['Decision_Modele'] == 'Validation Auto')
+        df_auto = df_copy[mask_auto].copy()
 
-        accuracy_globale = 100 * (vp + vn) / (vp + vn + fp + fn) if (vp + vn + fp + fn) > 0 else 0
-        precision = 100 * vp / (vp + fp) if (vp + fp) > 0 else 0
-        recall = 100 * vp / (vp + fn) if (vp + fn) > 0 else 0
+        if len(df_auto) > 0:
+            # Accuracy globale (sur cas automatisés seulement)
+            vp = ((df_auto['Fondee_bool'] == 1) & (df_auto['Validation_bool'] == 1)).sum()
+            vn = ((df_auto['Fondee_bool'] == 0) & (df_auto['Validation_bool'] == 0)).sum()
+            fp = ((df_auto['Fondee_bool'] == 0) & (df_auto['Validation_bool'] == 1)).sum()
+            fn = ((df_auto['Fondee_bool'] == 1) & (df_auto['Validation_bool'] == 0)).sum()
+
+            accuracy_globale = 100 * (vp + vn) / (vp + vn + fp + fn) if (vp + vn + fp + fn) > 0 else 0
+            precision = 100 * vp / (vp + fp) if (vp + fp) > 0 else 0
+            recall = 100 * vp / (vp + fn) if (vp + fn) > 0 else 0
+        else:
+            accuracy_globale = precision = recall = 0
+            vp = vn = fp = fn = 0
 
         # 1. Métriques globales
         ax1 = plt.subplot(2, 3, 1)
@@ -255,7 +264,7 @@ class VisualizerFromModelComparison:
 
         bars = ax1.bar(metrics, values, color=colors, alpha=0.8, edgecolor='black', linewidth=2)
         ax1.set_ylabel('Pourcentage (%)', fontweight='bold', fontsize=13)
-        ax1.set_title('Métriques de Performance Globales', fontweight='bold', fontsize=15)
+        ax1.set_title('Métriques sur Cas Automatisés', fontweight='bold', fontsize=15)
         ax1.set_ylim(0, 100)
         ax1.grid(True, alpha=0.3, axis='y')
 
@@ -296,12 +305,12 @@ AUTOMATISATION:
   • Dossiers auto:   {n_auto:,}
   • Audit humain:    {n_total - n_auto:,}
 
-PERFORMANCE:
+PERFORMANCE (cas auto uniquement):
   • Accuracy:        {accuracy_globale:.1f}%
   • Précision:       {precision:.1f}%
   • Rappel:          {recall:.1f}%
 
-CONFUSION:
+CONFUSION (cas auto):
   • VP: {vp:,}    VN: {vn:,}
   • FP: {fp:,}    FN: {fn:,}
 
@@ -315,8 +324,9 @@ SEUILS OPTIMISÉS:
                 bbox=dict(boxstyle='round', facecolor='#E8F8F5', alpha=0.9,
                          edgecolor='#16A085', linewidth=2))
 
-        # 4-6. Accuracy par top familles
+        # 4-6. Accuracy par top familles (calculé sur cas automatisés uniquement)
         if 'Famille Produit' in df_copy.columns:
+            # Top familles basées sur le volume total
             top_families = df_copy['Famille Produit'].value_counts().head(10)
 
             accuracies = []
@@ -325,16 +335,26 @@ SEUILS OPTIMISÉS:
 
             for famille in top_families.index:
                 df_fam = df_copy[df_copy['Famille Produit'] == famille]
-                n_fam = len(df_fam)
+                # FILTRER pour ne garder que les cas automatisés
+                df_fam_auto = df_fam[
+                    (df_fam['Decision_Modele'] == 'Rejet Auto') |
+                    (df_fam['Decision_Modele'] == 'Validation Auto')
+                ].copy()
 
-                vp_fam = ((df_fam['Fondee_bool'] == 1) & (df_fam['Validation_bool'] == 1)).sum()
-                vn_fam = ((df_fam['Fondee_bool'] == 0) & (df_fam['Validation_bool'] == 0)).sum()
-                fp_fam = ((df_fam['Fondee_bool'] == 0) & (df_fam['Validation_bool'] == 1)).sum()
-                fn_fam = ((df_fam['Fondee_bool'] == 1) & (df_fam['Validation_bool'] == 0)).sum()
+                n_fam = len(df_fam)  # Volume total pour le graphique
 
-                total_fam = vp_fam + vn_fam + fp_fam + fn_fam
-                acc_fam = 100 * (vp_fam + vn_fam) / total_fam if total_fam > 0 else 0
-                prec_fam = 100 * vp_fam / (vp_fam + fp_fam) if (vp_fam + fp_fam) > 0 else 0
+                if len(df_fam_auto) > 0:
+                    vp_fam = ((df_fam_auto['Fondee_bool'] == 1) & (df_fam_auto['Validation_bool'] == 1)).sum()
+                    vn_fam = ((df_fam_auto['Fondee_bool'] == 0) & (df_fam_auto['Validation_bool'] == 0)).sum()
+                    fp_fam = ((df_fam_auto['Fondee_bool'] == 0) & (df_fam_auto['Validation_bool'] == 1)).sum()
+                    fn_fam = ((df_fam_auto['Fondee_bool'] == 1) & (df_fam_auto['Validation_bool'] == 0)).sum()
+
+                    total_fam = vp_fam + vn_fam + fp_fam + fn_fam
+                    acc_fam = 100 * (vp_fam + vn_fam) / total_fam if total_fam > 0 else 0
+                    prec_fam = 100 * vp_fam / (vp_fam + fp_fam) if (vp_fam + fp_fam) > 0 else 0
+                else:
+                    acc_fam = 0
+                    prec_fam = 0
 
                 accuracies.append(acc_fam)
                 volumes.append(n_fam)
