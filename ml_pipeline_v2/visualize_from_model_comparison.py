@@ -136,6 +136,9 @@ class VisualizerFromModelComparison:
 
         df = self.df_2025.copy()
 
+        # Sauvegarder l'état AVANT règles métier pour les graphiques
+        self.df_before_rules = df.copy()
+
         # Initialiser
         df['Raison_Audit'] = ''
         df['Decision_Finale'] = df['Decision_Modele']
@@ -214,23 +217,23 @@ class VisualizerFromModelComparison:
         self.df_2025 = df
 
     def plot_accuracy_automation_families(self):
-        """Graphique 1: Accuracy + Automatisation + Top Familles"""
-        print("\n📊 Graphique 1: Performance globale et par famille...")
+        """Graphique 1: Accuracy + Automatisation + Top Familles (AVANT règles métier)"""
+        print("\n📊 Graphique 1: Performance globale et par famille (AVANT règles métier)...")
 
         fig = plt.figure(figsize=(20, 10))
-        fig.suptitle('PERFORMANCE GLOBALE ET PAR FAMILLE - 2025 (Model Comparison V2)',
+        fig.suptitle('PERFORMANCE GLOBALE ET PAR FAMILLE - 2025 (AVANT Règles Métier)',
                      fontsize=20, fontweight='bold', y=0.98)
 
-        # Préparer les données
-        df_copy = self.df_2025.copy()
-        df_copy['Validation_bool'] = df_copy['Decision_Finale'].apply(
+        # Utiliser les données AVANT l'application des règles métier
+        df_copy = self.df_before_rules.copy()
+        df_copy['Validation_bool'] = df_copy['Decision_Modele'].apply(
             lambda x: 1 if x == 'Validation Auto' else 0
         )
 
-        # Calculs globaux
+        # Calculs globaux (AVANT règles métier)
         n_total = len(df_copy)
-        n_rejet = (df_copy['Decision_Finale'] == 'Rejet Auto').sum()
-        n_validation = (df_copy['Decision_Finale'] == 'Validation Auto').sum()
+        n_rejet = (df_copy['Decision_Modele'] == 'Rejet Auto').sum()
+        n_validation = (df_copy['Decision_Modele'] == 'Validation Auto').sum()
         n_auto = n_rejet + n_validation
         taux_auto = 100 * n_auto / n_total
 
@@ -396,220 +399,220 @@ SEUILS OPTIMISÉS:
         plt.close()
 
     def plot_gain_montant_only(self):
-        """Graphique 2: Gain en montant (GAIN NET)"""
-        print("\n📊 Graphique 2: Gain financier NET...")
+        """Graphique 2: Comparaison Gain AVANT vs APRÈS Règles Métier"""
+        print("\n📊 Graphique 2: Gain AVANT vs APRÈS règles métier...")
 
         if 'Montant demandé' not in self.df_2025.columns:
             print("⚠️  Colonne 'Montant demandé' manquante - Graphique ignoré")
             return
 
-        fig = plt.figure(figsize=(20, 10))
-        fig.suptitle('GAIN FINANCIER NET - 2025 (Model Comparison V2)',
-                     fontsize=20, fontweight='bold', y=0.98)
+        def calculer_gain_net(df, decision_col):
+            """Calculer le gain NET pour un DataFrame"""
+            df_work = df.copy()
+            df_work['Validation_bool'] = df_work[decision_col].apply(
+                lambda x: 1 if x == 'Validation Auto' else 0
+            )
 
-        # Préparer les données
-        df_copy = self.df_2025.copy()
-        df_copy['Validation_bool'] = df_copy['Decision_Finale'].apply(
-            lambda x: 1 if x == 'Validation Auto' else 0
+            # Nombre de cas automatisés
+            n_auto = ((df_work[decision_col] == 'Rejet Auto') |
+                     (df_work[decision_col] == 'Validation Auto')).sum()
+
+            # GAIN BRUT
+            gain_brut = n_auto * PRIX_UNITAIRE_DH
+
+            # Masque pour cas automatisés
+            mask_auto = ((df_work[decision_col] == 'Rejet Auto') |
+                        (df_work[decision_col] == 'Validation Auto'))
+            df_auto = df_work[mask_auto]
+
+            if len(df_auto) == 0:
+                return gain_brut, 0, 0, gain_brut
+
+            # FP et FN
+            fp_mask = (df_auto['Fondee_bool'] == 0) & (df_auto['Validation_bool'] == 1)
+            fn_mask = (df_auto['Fondee_bool'] == 1) & (df_auto['Validation_bool'] == 0)
+
+            # Nettoyer montants
+            montants_auto = df_auto['Montant demandé'].values
+            montants_clean = np.nan_to_num(montants_auto, nan=0.0, posinf=0.0, neginf=0.0)
+            montants_clean = np.clip(montants_clean, 0,
+                                    np.percentile(montants_clean[montants_clean > 0], 99)
+                                    if (montants_clean > 0).any() else 0)
+
+            # Calcul pertes
+            perte_fp = montants_clean[fp_mask.values].sum()
+            perte_fn = 2 * montants_clean[fn_mask.values].sum()
+
+            # GAIN NET
+            gain_net = gain_brut - perte_fp - perte_fn
+
+            return gain_brut, perte_fp, perte_fn, gain_net
+
+        # Calculer AVANT règles métier
+        gain_brut_avant, perte_fp_avant, perte_fn_avant, gain_net_avant = calculer_gain_net(
+            self.df_before_rules, 'Decision_Modele'
         )
 
-        # Calculs
-        n_total = len(df_copy)
-        n_rejet = (df_copy['Decision_Finale'] == 'Rejet Auto').sum()
-        n_validation = (df_copy['Decision_Finale'] == 'Validation Auto').sum()
-        n_auto = n_rejet + n_validation
+        # Calculer APRÈS règles métier
+        gain_brut_apres, perte_fp_apres, perte_fn_apres, gain_net_apres = calculer_gain_net(
+            self.df_2025, 'Decision_Finale'
+        )
 
-        # GAIN BRUT
-        gain_brut = n_auto * PRIX_UNITAIRE_DH
+        # Différence (impact des règles)
+        diff_gain_net = gain_net_apres - gain_net_avant
 
-        # Masques pour cas automatisés
-        mask_auto = (df_copy['Decision_Finale'] == 'Rejet Auto') | (df_copy['Decision_Finale'] == 'Validation Auto')
-        df_auto = df_copy[mask_auto]
+        # Créer le graphique
+        fig = plt.figure(figsize=(18, 10))
+        fig.suptitle('COMPARAISON GAIN NET: AVANT vs APRÈS Règles Métier',
+                     fontsize=20, fontweight='bold', y=0.98)
 
-        # FP et FN
-        fp_mask = (df_auto['Fondee_bool'] == 0) & (df_auto['Validation_bool'] == 1)
-        fn_mask = (df_auto['Fondee_bool'] == 1) & (df_auto['Validation_bool'] == 0)
-
-        n_fp = fp_mask.sum()
-        n_fn = fn_mask.sum()
-
-        # Nettoyer montants
-        montants_auto = df_auto['Montant demandé'].values
-        montants_clean = np.nan_to_num(montants_auto, nan=0.0, posinf=0.0, neginf=0.0)
-        montants_clean = np.clip(montants_clean, 0,
-                                np.percentile(montants_clean[montants_clean > 0], 99)
-                                if (montants_clean > 0).any() else 0)
-
-        # Calcul pertes
-        perte_fp = montants_clean[fp_mask.values].sum()
-        perte_fn = 2 * montants_clean[fn_mask.values].sum()
-
-        # GAIN NET
-        gain_net = gain_brut - perte_fp - perte_fn
-
-        # 1. Cascade du gain
+        # 1. Comparaison principale: AVANT vs APRÈS
         ax1 = plt.subplot(2, 3, 1)
-        categories = ['Gain\nBrut', 'Perte\nFP', 'Perte\nFN', 'GAIN\nNET']
-        values = [gain_brut, -perte_fp, -perte_fn, gain_net]
-        values_m = [v / 1e6 for v in values]
-        colors_bars = ['#2ECC71', '#E74C3C', '#E67E22', '#27AE60']
+        categories = ['AVANT\nRègles', 'APRÈS\nRègles']
+        values = [gain_net_avant / 1e6, gain_net_apres / 1e6]
+        colors = ['#3498DB', '#27AE60'] if diff_gain_net >= 0 else ['#3498DB', '#E74C3C']
 
-        bars = ax1.bar(categories, values_m, color=colors_bars,
-                      alpha=0.8, edgecolor='black', linewidth=2)
+        bars = ax1.bar(categories, values, color=colors,
+                      alpha=0.8, edgecolor='black', linewidth=3, width=0.6)
 
-        ax1.set_ylabel('Millions DH', fontweight='bold', fontsize=13)
-        ax1.set_title('Cascade du Gain Net', fontweight='bold', fontsize=15)
+        ax1.set_ylabel('Millions DH', fontweight='bold', fontsize=14)
+        ax1.set_title('Gain NET: Comparaison', fontweight='bold', fontsize=16)
         ax1.grid(True, alpha=0.3, axis='y')
-        ax1.axhline(y=0, color='black', linestyle='-', linewidth=1.5)
+        ax1.axhline(y=0, color='black', linestyle='-', linewidth=1)
 
-        for bar, val_m, val in zip(bars, values_m, values):
+        for bar, val in zip(bars, values):
             height = bar.get_height()
-            va = 'bottom' if val_m >= 0 else 'top'
-            y_pos = height if val_m >= 0 else height
-            ax1.text(bar.get_x() + bar.get_width()/2., y_pos,
-                    f'{abs(val_m):.2f}M\n({abs(val):,.0f} DH)',
-                    ha='center', va=va, fontweight='bold', fontsize=10)
+            ax1.text(bar.get_x() + bar.get_width()/2., height + max(values)*0.02,
+                    f'{val:.2f}M DH', ha='center', va='bottom',
+                    fontweight='bold', fontsize=13)
 
-        # 2. Répartition du gain brut
+        # 2. Impact des règles (différence)
         ax2 = plt.subplot(2, 3, 2)
-        parts = ['Rejet Auto\n(économie)', 'Validation Auto\n(économie)']
-        gains_parts = [n_rejet * PRIX_UNITAIRE_DH, n_validation * PRIX_UNITAIRE_DH]
-        colors_parts = ['#E74C3C', '#2ECC71']
+        impact_color = '#27AE60' if diff_gain_net >= 0 else '#E74C3C'
+        impact_sign = '+' if diff_gain_net >= 0 else ''
 
-        wedges, texts, autotexts = ax2.pie(gains_parts, labels=parts,
-                                            autopct='%1.1f%%', colors=colors_parts,
-                                            shadow=True, startangle=90,
-                                            textprops={'fontsize': 11, 'weight': 'bold'})
+        ax2.axis('off')
+        ax2.set_xlim(0, 10)
+        ax2.set_ylim(0, 10)
 
-        for autotext in autotexts:
-            autotext.set_color('white')
-            autotext.set_fontsize(12)
+        # Box principal
+        rect = plt.Rectangle((1, 3), 8, 4, facecolor=impact_color,
+                            edgecolor='black', linewidth=3, alpha=0.9)
+        ax2.add_patch(rect)
 
-        ax2.set_title(f'Composition du Gain Brut\n({gain_brut/1e6:.2f}M DH)',
-                     fontweight='bold', fontsize=15)
+        ax2.text(5, 6.5, 'IMPACT DES RÈGLES', ha='center', va='center',
+                fontsize=16, fontweight='bold', color='white')
+        ax2.text(5, 5, f'{impact_sign}{diff_gain_net/1e6:.2f}M DH', ha='center', va='center',
+                fontsize=22, fontweight='bold', color='white')
+        ax2.text(5, 3.5, f'({impact_sign}{diff_gain_net:,.0f} DH)', ha='center', va='center',
+                fontsize=12, fontweight='bold', color='white')
 
-        # 3. Détails des pertes
-        ax3 = plt.subplot(2, 3, 3)
-        if n_fp + n_fn > 0:
-            perte_categories = ['FP\n(accordé à tort)', 'FN\n(refusé à tort × 2)']
-            perte_values = [perte_fp / 1e6, perte_fn / 1e6]
-            perte_colors = ['#E74C3C', '#E67E22']
-
-            bars = ax3.bar(perte_categories, perte_values, color=perte_colors,
-                          alpha=0.8, edgecolor='black', linewidth=2)
-
-            ax3.set_ylabel('Millions DH', fontweight='bold', fontsize=13)
-            ax3.set_title('Détail des Pertes', fontweight='bold', fontsize=15)
-            ax3.grid(True, alpha=0.3, axis='y')
-
-            for bar, val in zip(bars, perte_values):
-                height = bar.get_height()
-                ax3.text(bar.get_x() + bar.get_width()/2., height,
-                        f'{val:.2f}M', ha='center', va='bottom', fontweight='bold', fontsize=11)
+        # Flèche
+        arrow_y = 2
+        if diff_gain_net >= 0:
+            ax2.arrow(5, arrow_y, 0, 0.5, head_width=0.5, head_length=0.2,
+                     fc='green', ec='black', linewidth=2)
+            ax2.text(5, 1, 'AMÉLIORATION', ha='center', va='center',
+                    fontsize=12, fontweight='bold', color='green')
         else:
-            ax3.text(0.5, 0.5, 'Aucune perte\n(Performance parfaite!)',
-                    ha='center', va='center', transform=ax3.transAxes,
-                    fontsize=16, fontweight='bold', color='#2ECC71')
-            ax3.axis('off')
+            ax2.arrow(5, arrow_y, 0, -0.5, head_width=0.5, head_length=0.2,
+                     fc='red', ec='black', linewidth=2)
+            ax2.text(5, 1, 'RÉDUCTION', ha='center', va='center',
+                    fontsize=12, fontweight='bold', color='red')
 
-        # 4. Schéma de calcul
-        ax4 = plt.subplot(2, 3, 4)
-        ax4.axis('off')
-        ax4.set_xlim(0, 10)
-        ax4.set_ylim(0, 10)
+        # 3. Détail AVANT règles
+        ax3 = plt.subplot(2, 3, 3)
+        ax3.axis('off')
 
-        ax4.text(5, 9.5, 'FORMULE DU GAIN NET', ha='center',
-                fontsize=14, fontweight='bold')
+        detail_avant = f"""
+📊 AVANT Règles Métier
 
-        # Box 1
-        rect1 = plt.Rectangle((1, 7), 8, 1.2, facecolor='#2ECC71',
-                              edgecolor='black', linewidth=2)
-        ax4.add_patch(rect1)
-        ax4.text(5, 7.6, f'GAIN BRUT = {n_auto:,} dossiers × {PRIX_UNITAIRE_DH} DH = {gain_brut:,.0f} DH',
-                ha='center', va='center', fontsize=11, fontweight='bold', color='white')
+• Gain Brut:     {gain_brut_avant:,.0f} DH
+                 = {gain_brut_avant/1e6:.2f}M DH
 
-        ax4.text(5, 6.3, '−', ha='center', va='center', fontsize=30, fontweight='bold')
+• Perte FP:      {perte_fp_avant:,.0f} DH
+                 = {perte_fp_avant/1e6:.2f}M DH
 
-        # Box 2
-        rect2 = plt.Rectangle((1, 5), 8, 0.9, facecolor='#E74C3C',
-                              edgecolor='black', linewidth=2)
-        ax4.add_patch(rect2)
-        ax4.text(5, 5.45, f'PERTE FP = {n_fp:,} cas × montants = {perte_fp:,.0f} DH',
-                ha='center', va='center', fontsize=10, fontweight='bold', color='white')
+• Perte FN:      {perte_fn_avant:,.0f} DH
+                 = {perte_fn_avant/1e6:.2f}M DH
 
-        ax4.text(5, 4.3, '−', ha='center', va='center', fontsize=30, fontweight='bold')
-
-        # Box 3
-        rect3 = plt.Rectangle((1, 3), 8, 0.9, facecolor='#E67E22',
-                              edgecolor='black', linewidth=2)
-        ax4.add_patch(rect3)
-        ax4.text(5, 3.45, f'PERTE FN = {n_fn:,} cas × 2 × montants = {perte_fn:,.0f} DH',
-                ha='center', va='center', fontsize=10, fontweight='bold', color='white')
-
-        ax4.text(5, 2.3, '=', ha='center', va='center', fontsize=30, fontweight='bold')
-
-        # Résultat
-        rect_final = plt.Rectangle((1, 0.5), 8, 1.3, facecolor='#27AE60',
-                                   edgecolor='black', linewidth=3)
-        ax4.add_patch(rect_final)
-        ax4.text(5, 1.3, 'GAIN NET FINAL', ha='center', va='center',
-                fontsize=14, fontweight='bold', color='white')
-        ax4.text(5, 0.8, f'{gain_net:,.0f} DH = {gain_net/1e6:.2f} Millions DH',
-                ha='center', va='center', fontsize=13, fontweight='bold', color='white')
-
-        # 5. Stats récap
-        ax5 = plt.subplot(2, 3, 5)
-        ax5.axis('off')
-
-        stats_text = f"""
-💰 RÉCAPITULATIF FINANCIER
-
-DOSSIERS:
-  • Total:              {n_total:,}
-  • Automatisés:        {n_auto:,} ({100*n_auto/n_total:.1f}%)
-    - Rejet:            {n_rejet:,}
-    - Validation:       {n_validation:,}
-
-GAINS:
-  • Gain Brut:          {gain_brut:,.0f} DH
-                        = {gain_brut/1e6:.2f} M DH
-
-PERTES:
-  • FP ({n_fp:,} cas):      {perte_fp:,.0f} DH
-                        = {perte_fp/1e6:.2f} M DH
-  • FN ({n_fn:,} cas):      {perte_fn:,.0f} DH
-                        = {perte_fn/1e6:.2f} M DH
-  • Total pertes:       {perte_fp + perte_fn:,.0f} DH
-
-RÉSULTAT:
-  • GAIN NET:           {gain_net:,.0f} DH
-                        = {gain_net/1e6:.2f} M DH
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• GAIN NET:      {gain_net_avant:,.0f} DH
+                 = {gain_net_avant/1e6:.2f}M DH
         """
 
-        ax5.text(0.05, 0.95, stats_text, transform=ax5.transAxes,
-                fontsize=10, verticalalignment='top', family='monospace',
+        ax3.text(0.05, 0.95, detail_avant, transform=ax3.transAxes,
+                fontsize=11, verticalalignment='top', family='monospace',
+                bbox=dict(boxstyle='round', facecolor='#D6EAF8', alpha=0.9,
+                         edgecolor='#3498DB', linewidth=3))
+
+        # 4. Détail APRÈS règles
+        ax4 = plt.subplot(2, 3, 4)
+        ax4.axis('off')
+
+        detail_apres = f"""
+📊 APRÈS Règles Métier
+
+• Gain Brut:     {gain_brut_apres:,.0f} DH
+                 = {gain_brut_apres/1e6:.2f}M DH
+
+• Perte FP:      {perte_fp_apres:,.0f} DH
+                 = {perte_fp_apres/1e6:.2f}M DH
+
+• Perte FN:      {perte_fn_apres:,.0f} DH
+                 = {perte_fn_apres/1e6:.2f}M DH
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• GAIN NET:      {gain_net_apres:,.0f} DH
+                 = {gain_net_apres/1e6:.2f}M DH
+        """
+
+        ax4.text(0.05, 0.95, detail_apres, transform=ax4.transAxes,
+                fontsize=11, verticalalignment='top', family='monospace',
                 bbox=dict(boxstyle='round', facecolor='#D5F4E6', alpha=0.9,
-                         edgecolor='#2ECC71', linewidth=3))
+                         edgecolor='#27AE60', linewidth=3))
 
-        # 6. Comparaison
-        ax6 = plt.subplot(2, 3, 6)
-        comparison_data = ['Gain\nBrut', 'Pertes\nTotales', 'GAIN\nNET']
-        comparison_values = [gain_brut/1e6, (perte_fp + perte_fn)/1e6, gain_net/1e6]
-        comparison_colors = ['#2ECC71', '#E74C3C', '#27AE60']
+        # 5. Graphique cascade AVANT
+        ax5 = plt.subplot(2, 3, 5)
+        cats_avant = ['Gain\nBrut', 'Pertes', 'GAIN\nNET']
+        vals_avant = [gain_brut_avant/1e6, -(perte_fp_avant + perte_fn_avant)/1e6, gain_net_avant/1e6]
+        cols_avant = ['#2ECC71', '#E74C3C', '#3498DB']
 
-        bars = ax6.bar(comparison_data, comparison_values, color=comparison_colors,
+        bars = ax5.bar(cats_avant, vals_avant, color=cols_avant,
                       alpha=0.8, edgecolor='black', linewidth=2)
 
-        ax6.set_ylabel('Millions DH', fontweight='bold', fontsize=13)
-        ax6.set_title('Comparaison Gains vs Pertes', fontweight='bold', fontsize=15)
-        ax6.grid(True, alpha=0.3, axis='y')
+        ax5.set_ylabel('Millions DH', fontweight='bold', fontsize=12)
+        ax5.set_title('AVANT: Cascade du Gain', fontweight='bold', fontsize=14)
+        ax5.grid(True, alpha=0.3, axis='y')
+        ax5.axhline(y=0, color='black', linestyle='-', linewidth=1)
 
-        for bar, val in zip(bars, comparison_values):
+        for bar, val in zip(bars, vals_avant):
             height = bar.get_height()
-            ax6.text(bar.get_x() + bar.get_width()/2., height,
-                    f'{val:.2f}M', ha='center', va='bottom', fontweight='bold', fontsize=12)
+            va = 'bottom' if val >= 0 else 'top'
+            ax5.text(bar.get_x() + bar.get_width()/2., height + (0.05 if val >= 0 else -0.05),
+                    f'{abs(val):.2f}M', ha='center', va=va, fontweight='bold', fontsize=10)
 
-        plt.tight_layout(rect=[0, 0, 0.98, 0.96])
+        # 6. Graphique cascade APRÈS
+        ax6 = plt.subplot(2, 3, 6)
+        cats_apres = ['Gain\nBrut', 'Pertes', 'GAIN\nNET']
+        vals_apres = [gain_brut_apres/1e6, -(perte_fp_apres + perte_fn_apres)/1e6, gain_net_apres/1e6]
+        cols_apres = ['#2ECC71', '#E74C3C', '#27AE60']
+
+        bars = ax6.bar(cats_apres, vals_apres, color=cols_apres,
+                      alpha=0.8, edgecolor='black', linewidth=2)
+
+        ax6.set_ylabel('Millions DH', fontweight='bold', fontsize=12)
+        ax6.set_title('APRÈS: Cascade du Gain', fontweight='bold', fontsize=14)
+        ax6.grid(True, alpha=0.3, axis='y')
+        ax6.axhline(y=0, color='black', linestyle='-', linewidth=1)
+
+        for bar, val in zip(bars, vals_apres):
+            height = bar.get_height()
+            va = 'bottom' if val >= 0 else 'top'
+            ax6.text(bar.get_x() + bar.get_width()/2., height + (0.05 if val >= 0 else -0.05),
+                    f'{abs(val):.2f}M', ha='center', va=va, fontweight='bold', fontsize=10)
+
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
         output_path = self.output_dir / 'G2_gain_montant_net_v2.png'
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         print(f"✅ Sauvegardé: {output_path}")
