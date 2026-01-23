@@ -1,0 +1,32 @@
+================================================================================
+💰 GAINS FINANCIERS - 2025 (AVANT Règles Métier)
+================================================================================
+
+Modèle: XGBoost
+Seuil BAS:  0.4300
+Seuil HAUT: 0.5000
+
+RÉPARTITION DES DÉCISIONS:
+  Rejet Auto:      4,021 (50.3%)
+  Audit Humain:    0 (0.0%)
+  Validation Auto: 3,979 (49.7%)
+  TOTAL AUTO:      8,000 (100.0%)
+
+================================================================================
+CALCUL FINANCIER
+================================================================================
+
+GAIN BRUT:                 1,352,000 DH  =      1.35 Millions DH
+
+PERTES:
+  Faux Positifs:                5.89 DH  =      0.00 Millions DH
+  Faux Négatifs:     54.25999999999999 DH  =      0.00 Millions DH
+  TOTAL Pertes:      60.14999999999999 DH  =      0.00 Millions DH
+
+GAIN NET:               1,351,939.85 DH  =      1.35 Millions DH
+
+INDICATEURS:
+  Taux automatisation:  100.0%
+  Nombre FP:            2
+  Nombre FN:            9
+  Ratio Gain/Perte:     22477.1x
