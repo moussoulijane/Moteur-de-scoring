@@ -22,12 +22,13 @@ class ProductionPreprocessorV2:
     - Segment
     - Marché
     - anciennete_annees
+    - PNB analytique (vision commerciale) cumulé
 
     Features calculées:
     - Taux de fondée par famille/catégorie/sous-catégorie (sur 2024)
-    - Écart à la médiane par famille
-    - Ratios et interactions
-    - Log transformations
+    - Écart à la médiane par famille (montant et PNB)
+    - Ratios et interactions (montant, délai, ancienneté, PNB)
+    - Log transformations (montant, délai, ancienneté, PNB)
     """
 
     def __init__(self, min_samples_stats=30):
@@ -43,7 +44,8 @@ class ProductionPreprocessorV2:
         self.category_stats = {}
         self.subcategory_stats = {}
         self.segment_stats = {}
-        self.family_medians = {}
+        self.family_medians = {}  # Médiane montant par famille
+        self.family_pnb_medians = {}  # Médiane PNB par famille
         self.categorical_encodings = {}
 
         self.feature_names_fitted = None
@@ -119,7 +121,8 @@ class ProductionPreprocessorV2:
 
         # 1. Nettoyer et convertir les colonnes numériques (avec traitement texte)
         print("🔧 Conversion des colonnes numériques (texte -> float)...")
-        numeric_columns = ['Montant demandé', 'Délai estimé', 'anciennete_annees']
+        numeric_columns = ['Montant demandé', 'Délai estimé', 'anciennete_annees',
+                          'PNB analytique (vision commerciale) cumulé']
         for col in numeric_columns:
             if col in X.columns:
                 X[col] = self._clean_numeric_column(X[col])
@@ -206,7 +209,13 @@ class ProductionPreprocessorV2:
         print("📊 Calcul médianes par famille (base 2024)...")
         if 'Famille Produit' in X.columns and 'Montant demandé' in X.columns:
             self.family_medians = X.groupby('Famille Produit')['Montant demandé'].median().to_dict()
-            print(f"   ✅ {len(self.family_medians)} familles")
+            print(f"   ✅ Montant: {len(self.family_medians)} familles")
+
+        if 'Famille Produit' in X.columns and 'PNB analytique (vision commerciale) cumulé' in X.columns:
+            pnb_data = X[X['PNB analytique (vision commerciale) cumulé'] > 0]
+            if len(pnb_data) > 0:
+                self.family_pnb_medians = pnb_data.groupby('Famille Produit')['PNB analytique (vision commerciale) cumulé'].median().to_dict()
+                print(f"   ✅ PNB: {len(self.family_pnb_medians)} familles")
 
         # 5. Encoder fréquences catégorielles
         print("🔢 Encodage fréquences catégorielles...")
@@ -242,7 +251,8 @@ class ProductionPreprocessorV2:
         X = df.copy()
 
         # 1. Nettoyer et convertir numériques (avec traitement texte)
-        numeric_columns = ['Montant demandé', 'Délai estimé', 'anciennete_annees']
+        numeric_columns = ['Montant demandé', 'Délai estimé', 'anciennete_annees',
+                          'PNB analytique (vision commerciale) cumulé']
         for col in numeric_columns:
             if col in X.columns:
                 X[col] = self._clean_numeric_column(X[col])
@@ -325,6 +335,23 @@ class ProductionPreprocessorV2:
         if 'anciennete_annees' in df.columns:
             df['log_anciennete'] = np.log1p(np.abs(df['anciennete_annees']))
 
+        if 'PNB analytique (vision commerciale) cumulé' in df.columns:
+            df['log_pnb'] = np.log1p(np.abs(df['PNB analytique (vision commerciale) cumulé']))
+
+        # 4b. Écart PNB à la médiane de la famille
+        if 'Famille Produit' in df.columns and 'PNB analytique (vision commerciale) cumulé' in df.columns and self.family_pnb_medians:
+            df['ecart_pnb_mediane_famille'] = df.apply(
+                lambda row: (
+                    row['PNB analytique (vision commerciale) cumulé'] -
+                    self.family_pnb_medians.get(row['Famille Produit'], row['PNB analytique (vision commerciale) cumulé'])
+                ) / (self.family_pnb_medians.get(row['Famille Produit'], 1) + 1),
+                axis=1
+            )
+
+        # 4c. Ratio montant / PNB
+        if 'Montant demandé' in df.columns and 'PNB analytique (vision commerciale) cumulé' in df.columns:
+            df['ratio_montant_pnb'] = df['Montant demandé'] / (df['PNB analytique (vision commerciale) cumulé'] + 1)
+
         # 5. Features d'interaction
         if 'Montant demandé' in df.columns and 'anciennete_annees' in df.columns:
             df['montant_x_anciennete'] = df['Montant demandé'] * df['anciennete_annees']
@@ -338,6 +365,13 @@ class ProductionPreprocessorV2:
         # 6. Interaction avec taux de fondée
         if 'taux_fondee_famille' in df.columns and 'Montant demandé' in df.columns:
             df['montant_x_taux_famille'] = df['Montant demandé'] * df['taux_fondee_famille']
+
+        # 7. Interactions avec PNB
+        if 'PNB analytique (vision commerciale) cumulé' in df.columns and 'anciennete_annees' in df.columns:
+            df['pnb_x_anciennete'] = df['PNB analytique (vision commerciale) cumulé'] * df['anciennete_annees']
+
+        if 'PNB analytique (vision commerciale) cumulé' in df.columns and 'taux_fondee_famille' in df.columns:
+            df['pnb_x_taux_famille'] = df['PNB analytique (vision commerciale) cumulé'] * df['taux_fondee_famille']
 
         # Sélectionner colonnes numériques
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()

@@ -1,0 +1,1558 @@
+"""
+GÉNÉRATION DES VISUALISATIONS DES RÉSULTATS ET GAINS
+Crée des graphiques détaillés pour analyser les résultats du modèle sur 2025/2023
+
+Usage:
+    python ml_pipeline_v2/generate_results_visuals.py --data_2025 predictions_2025.xlsx --data_2023 reclamations_2023.xlsx
+
+    Si les fichiers n'ont pas encore été scorés, le script fera automatiquement l'inférence
+"""
+import sys
+sys.path.append('src')
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pathlib import Path
+import argparse
+from datetime import datetime
+import warnings
+import joblib
+warnings.filterwarnings('ignore')
+
+# Import preprocessing
+from preprocessor_v2 import ProductionPreprocessorV2
+
+# Configuration
+sns.set_style('whitegrid')
+plt.rcParams['figure.figsize'] = (16, 10)
+
+
+class ResultsVisualizer:
+    """Générateur de visualisations des résultats"""
+
+    def __init__(self, data_2025, data_2023=None):
+        self.data_2025 = data_2025
+        self.data_2023 = data_2023
+        self.output_dir = Path('outputs/results_analysis')
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Paramètres de gain (selon model_comparison_v2.py)
+        self.prix_unitaire = 169  # DH par dossier automatisé (PRIX_UNITAIRE_DH)
+        self.temps_traitement_manuel = 30  # minutes
+        self.temps_traitement_auto = 1  # minute
+        self.heures_annuelles_fte = 1600  # heures/an
+
+        print("\n" + "="*80)
+        print("📊 GÉNÉRATEUR DE VISUALISATIONS DES RÉSULTATS")
+        print("="*80)
+
+    def clean_numeric_column(self, df, col):
+        """Nettoyer colonne numérique"""
+        import re
+
+        def clean_value(val):
+            if pd.isna(val):
+                return np.nan
+            if isinstance(val, (int, float)):
+                return float(val)
+
+            val_str = str(val).strip().upper()
+            val_str = re.sub(r'(MAD|DH|DHs?|EUR|€|\$)', '', val_str, flags=re.IGNORECASE)
+            val_str = val_str.strip()
+
+            if not val_str:
+                return np.nan
+
+            val_str = val_str.replace(' ', '')
+
+            if ',' in val_str and '.' in val_str:
+                comma_pos = val_str.rfind(',')
+                dot_pos = val_str.rfind('.')
+                if comma_pos > dot_pos:
+                    val_str = val_str.replace('.', '').replace(',', '.')
+                else:
+                    val_str = val_str.replace(',', '')
+            elif ',' in val_str:
+                parts = val_str.split(',')
+                if len(parts[-1]) == 2:
+                    val_str = val_str.replace(',', '.')
+                else:
+                    val_str = val_str.replace(',', '')
+
+            try:
+                return float(val_str)
+            except:
+                return np.nan
+
+        return df[col].apply(clean_value)
+
+    def run_inference_if_needed(self, df, year):
+        """Faire l'inférence si les colonnes de décision sont manquantes"""
+        required_cols = ['Decision_Modele', 'Probabilite_Fondee']
+        missing = [c for c in required_cols if c not in df.columns]
+
+        if not missing:
+            return df  # Les colonnes existent déjà
+
+        print("\n" + "="*80)
+        print(f"🔮 INFÉRENCE AUTOMATIQUE {year} (colonnes manquantes: {', '.join(missing)})")
+        print("="*80)
+
+        # Chemins des modèles
+        model_path = Path('outputs/production_v2/models/best_model_v2.pkl')
+        preprocessor_path = Path('outputs/production_v2/models/preprocessor_v2.pkl')
+        predictions_path = Path('outputs/production_v2/predictions/predictions_2025_v2.pkl')
+
+        # Vérifier que les fichiers existent
+        if not model_path.exists():
+            print(f"❌ ERREUR: Modèle introuvable à {model_path}")
+            print("   Veuillez d'abord entraîner le modèle avec train_v2.py")
+            return df
+
+        if not preprocessor_path.exists():
+            print(f"❌ ERREUR: Preprocessor introuvable à {preprocessor_path}")
+            return df
+
+        # Charger modèle et preprocessor
+        print(f"\n📦 Chargement du modèle depuis {model_path}")
+        model = joblib.load(model_path)
+
+        print(f"📦 Chargement du preprocessor depuis {preprocessor_path}")
+        preprocessor = joblib.load(preprocessor_path)
+
+        # Charger seuils
+        threshold_low = 0.3
+        threshold_high = 0.7
+
+        if predictions_path.exists():
+            predictions_data = joblib.load(predictions_path)
+            if 'best_model' in predictions_data:
+                best_name = predictions_data['best_model']
+                if best_name in predictions_data:
+                    threshold_low = predictions_data[best_name].get('threshold_low', 0.3)
+                    threshold_high = predictions_data[best_name].get('threshold_high', 0.7)
+                    print(f"\n✅ Seuils chargés: low={threshold_low:.3f}, high={threshold_high:.3f}")
+
+        # Préprocessing
+        print(f"\n🔄 Préprocessing des données...")
+        try:
+            X = preprocessor.transform(df)
+            print(f"   ✅ Shape après preprocessing: {X.shape}")
+        except Exception as e:
+            print(f"❌ ERREUR lors du preprocessing: {e}")
+            return df
+
+        # Prédiction
+        print(f"\n🤖 Prédiction des probabilités...")
+        try:
+            y_prob = model.predict_proba(X)[:, 1]
+            print(f"   ✅ {len(y_prob)} probabilités calculées")
+        except Exception as e:
+            print(f"❌ ERREUR lors de la prédiction: {e}")
+            return df
+
+        # Décisions
+        print(f"\n📊 Génération des décisions...")
+        decisions = []
+        decision_codes = []
+
+        for prob in y_prob:
+            if prob <= threshold_low:
+                decisions.append('Rejet Auto')
+                decision_codes.append(-1)
+            elif prob >= threshold_high:
+                decisions.append('Validation Auto')
+                decision_codes.append(1)
+            else:
+                decisions.append('Audit Humain')
+                decision_codes.append(0)
+
+        # Compter les décisions
+        n_rejet = decision_codes.count(-1)
+        n_audit = decision_codes.count(0)
+        n_validation = decision_codes.count(1)
+
+        print(f"\n📈 Résultats de l'inférence:")
+        print(f"   • Rejet Auto:      {n_rejet:,} ({100*n_rejet/len(df):.1f}%)")
+        print(f"   • Audit Humain:    {n_audit:,} ({100*n_audit/len(df):.1f}%)")
+        print(f"   • Validation Auto: {n_validation:,} ({100*n_validation/len(df):.1f}%)")
+
+        # Ajouter colonnes au DataFrame
+        df['Probabilite_Fondee'] = y_prob
+        df['Decision_Modele'] = decisions
+        df['Decision_Code'] = decision_codes
+
+        print(f"✅ Colonnes ajoutées: Probabilite_Fondee, Decision_Modele, Decision_Code")
+
+        return df
+
+    def load_data(self):
+        """Charger et nettoyer les données"""
+        print("\n📂 Chargement des données...")
+
+        self.df_2025 = pd.read_excel(self.data_2025)
+        print(f"✅ 2025: {len(self.df_2025)} réclamations")
+
+        if self.data_2023:
+            self.df_2023 = pd.read_excel(self.data_2023)
+            print(f"✅ 2023: {len(self.df_2023)} réclamations")
+        else:
+            self.df_2023 = None
+
+        # Nettoyer colonnes numériques
+        print("\n🔄 Nettoyage des colonnes numériques...")
+        numeric_cols = ['Montant demandé', 'Délai estimé', 'anciennete_annees',
+                       'PNB analytique (vision commerciale) cumulé']
+
+        for df, year in [(self.df_2025, 2025), (self.df_2023, 2023)]:
+            if df is not None:
+                for col in numeric_cols:
+                    if col in df.columns:
+                        df[col] = self.clean_numeric_column(df, col)
+                print(f"   ✅ {year}: colonnes nettoyées")
+
+        # Faire l'inférence si nécessaire pour 2025
+        self.df_2025 = self.run_inference_if_needed(self.df_2025, 2025)
+
+        # Faire l'inférence si nécessaire pour 2023 (optionnel)
+        if self.df_2023 is not None:
+            self.df_2023 = self.run_inference_if_needed(self.df_2023, 2023)
+
+    def plot_decisions_distribution_2025(self):
+        """1. Distribution des décisions sur 2025"""
+        print("\n📊 Graphique 1: Distribution des décisions 2025...")
+
+        if 'Decision_Modele' not in self.df_2025.columns:
+            print("⚠️  Colonne Decision_Modele manquante - Graphique ignoré")
+            return
+
+        fig = plt.figure(figsize=(18, 10))
+        fig.suptitle('ANALYSE DES DÉCISIONS DU MODÈLE SUR 2025', fontsize=18, fontweight='bold', y=0.98)
+
+        # Compter les décisions
+        n_total = len(self.df_2025)
+        n_rejet = (self.df_2025['Decision_Modele'] == 'Rejet Auto').sum()
+        n_audit = (self.df_2025['Decision_Modele'] == 'Audit Humain').sum()
+        n_validation = (self.df_2025['Decision_Modele'] == 'Validation Auto').sum()
+
+        # 1. Pie chart principal
+        ax1 = plt.subplot(2, 3, 1)
+        sizes = [n_rejet, n_audit, n_validation]
+        labels = ['Rejet Auto', 'Audit Humain', 'Validation Auto']
+        colors = ['#E74C3C', '#F39C12', '#2ECC71']
+        explode = (0.05, 0.05, 0.1)
+
+        wedges, texts, autotexts = ax1.pie(sizes, explode=explode, labels=labels,
+                                            autopct='%1.1f%%', colors=colors,
+                                            shadow=True, startangle=90,
+                                            textprops={'fontsize': 11, 'weight': 'bold'})
+
+        for autotext in autotexts:
+            autotext.set_color('white')
+            autotext.set_fontsize(12)
+
+        ax1.set_title('Distribution des Décisions', fontweight='bold', fontsize=13)
+
+        # 2. Barres avec nombres absolus
+        ax2 = plt.subplot(2, 3, 2)
+        bars = ax2.bar(labels, sizes, color=colors, alpha=0.8, edgecolor='black', linewidth=2)
+        ax2.set_ylabel('Nombre de réclamations', fontweight='bold', fontsize=11)
+        ax2.set_title('Nombre par Décision', fontweight='bold', fontsize=13)
+        ax2.grid(True, alpha=0.3, axis='y')
+
+        for bar, count in zip(bars, sizes):
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{int(count):,}', ha='center', va='bottom', fontweight='bold', fontsize=11)
+
+        # 3. Taux d'automatisation
+        ax3 = plt.subplot(2, 3, 3)
+        taux_auto = 100 * (n_rejet + n_validation) / n_total
+        taux_audit = 100 * n_audit / n_total
+
+        bars = ax3.barh(['Automatisé\n(Rejet + Validation)', 'Audit Humain'],
+                       [taux_auto, taux_audit],
+                       color=['#2ECC71', '#F39C12'], alpha=0.8, edgecolor='black', linewidth=2)
+
+        ax3.set_xlabel('Pourcentage (%)', fontweight='bold', fontsize=11)
+        ax3.set_title('Taux d\'Automatisation', fontweight='bold', fontsize=13)
+        ax3.grid(True, alpha=0.3, axis='x')
+
+        for bar in bars:
+            width = bar.get_width()
+            ax3.text(width + 1, bar.get_y() + bar.get_height()/2.,
+                    f'{width:.1f}%', ha='left', va='center', fontweight='bold', fontsize=11)
+
+        # 4. Distribution des probabilités par décision
+        ax4 = plt.subplot(2, 3, 4)
+        if 'Probabilite_Fondee' in self.df_2025.columns:
+            for decision, color in [('Rejet Auto', '#E74C3C'),
+                                    ('Audit Humain', '#F39C12'),
+                                    ('Validation Auto', '#2ECC71')]:
+                data = self.df_2025[self.df_2025['Decision_Modele'] == decision]['Probabilite_Fondee']
+                if len(data) > 0:
+                    ax4.hist(data, bins=30, alpha=0.6, label=decision, color=color)
+
+            ax4.set_xlabel('Probabilité Fondée', fontweight='bold', fontsize=11)
+            ax4.set_ylabel('Fréquence', fontweight='bold', fontsize=11)
+            ax4.set_title('Distribution des Probabilités', fontweight='bold', fontsize=13)
+            ax4.legend()
+            ax4.grid(True, alpha=0.3)
+
+        # 5. Montants par décision
+        ax5 = plt.subplot(2, 3, 5)
+        if 'Montant demandé' in self.df_2025.columns:
+            montants = []
+            for decision in labels:
+                df_dec = self.df_2025[self.df_2025['Decision_Modele'] == decision]
+                mt = df_dec['Montant demandé'][df_dec['Montant demandé'] > 0].sum() / 1e6
+                montants.append(mt)
+
+            bars = ax5.bar(labels, montants, color=colors, alpha=0.8, edgecolor='black', linewidth=2)
+            ax5.set_ylabel('Montant Total (Millions DH)', fontweight='bold', fontsize=11)
+            ax5.set_title('Montant par Type de Décision', fontweight='bold', fontsize=13)
+            ax5.grid(True, alpha=0.3, axis='y')
+            ax5.tick_params(axis='x', rotation=15)
+
+            for bar, mt in zip(bars, montants):
+                height = bar.get_height()
+                ax5.text(bar.get_x() + bar.get_width()/2., height,
+                        f'{mt:.1f}M', ha='center', va='bottom', fontweight='bold', fontsize=10)
+
+        # 6. Statistiques récapitulatives
+        ax6 = plt.subplot(2, 3, 6)
+        ax6.axis('off')
+
+        stats_text = f"""
+📊 STATISTIQUES CLÉS 2025
+
+Total réclamations: {n_total:,}
+
+DÉCISIONS:
+  • Rejet Auto:      {n_rejet:,} ({100*n_rejet/n_total:.1f}%)
+  • Audit Humain:    {n_audit:,} ({100*n_audit/n_total:.1f}%)
+  • Validation Auto: {n_validation:,} ({100*n_validation/n_total:.1f}%)
+
+AUTOMATISATION:
+  • Taux automatisation: {taux_auto:.1f}%
+  • Gain traitement:     {n_rejet + n_validation:,} dossiers
+
+MONTANTS:
+  • Montant total:       {self.df_2025['Montant demandé'].sum()/1e6:.1f}M DH
+  • Montant validé:      {montants[2]:.1f}M DH
+  • Montant rejeté:      {montants[0]:.1f}M DH
+        """
+
+        ax6.text(0.1, 0.9, stats_text, transform=ax6.transAxes,
+                fontsize=11, verticalalignment='top', family='monospace',
+                bbox=dict(boxstyle='round', facecolor='#ECF0F1', alpha=0.8,
+                         edgecolor='black', linewidth=2))
+
+        plt.tight_layout()
+        output_path = self.output_dir / 'R1_decisions_distribution_2025.png'
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"✅ Sauvegardé: {output_path}")
+        plt.close()
+
+    def plot_comparison_2025_vs_2023(self):
+        """2. Comparaison 2025 vs 2023"""
+        print("\n📊 Graphique 2: Comparaison 2025 vs 2023...")
+
+        if self.df_2023 is None:
+            print("⚠️  Données 2023 manquantes - Graphique ignoré")
+            return
+
+        if 'Decision_Modele' not in self.df_2025.columns:
+            print("⚠️  Pas de décisions dans 2025 - Graphique ignoré")
+            return
+
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+        fig.suptitle('COMPARAISON 2023 vs 2025 (AVANT/APRÈS MODÈLE)',
+                     fontsize=18, fontweight='bold', y=0.98)
+
+        # 1. Volume comparaison
+        volumes = [len(self.df_2023), len(self.df_2025)]
+        years = ['2023\n(Sans modèle)', '2025\n(Avec modèle)']
+        colors = ['#95A5A6', '#3498DB']
+
+        bars = ax1.bar(years, volumes, color=colors, alpha=0.8, edgecolor='black', linewidth=2)
+        ax1.set_ylabel('Nombre de réclamations', fontweight='bold', fontsize=12)
+        ax1.set_title('Volume de Réclamations', fontweight='bold', fontsize=14)
+        ax1.grid(True, alpha=0.3, axis='y')
+
+        for bar, vol in zip(bars, volumes):
+            height = bar.get_height()
+            ax1.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{int(vol):,}', ha='center', va='bottom', fontweight='bold', fontsize=12)
+
+        # 2. Taux de fondée comparaison
+        # Initialiser avec valeur par défaut
+        taux_fondee_2023 = 0.0
+
+        if 'Fondée' in self.df_2023.columns:
+            n_fondee_2023 = (self.df_2023['Fondée'] == 'Oui').sum() if 'Oui' in self.df_2023['Fondée'].values else (self.df_2023['Fondée'] == 1).sum()
+            taux_fondee_2023 = 100 * n_fondee_2023 / len(self.df_2023)
+
+            n_validation_2025 = (self.df_2025['Decision_Modele'] == 'Validation Auto').sum()
+            taux_validation_2025 = 100 * n_validation_2025 / len(self.df_2025)
+
+            categories = ['Taux fondée\n2023', 'Taux validation\n2025']
+            values = [taux_fondee_2023, taux_validation_2025]
+
+            bars = ax2.bar(categories, values, color=['#95A5A6', '#2ECC71'],
+                          alpha=0.8, edgecolor='black', linewidth=2)
+            ax2.set_ylabel('Pourcentage (%)', fontweight='bold', fontsize=12)
+            ax2.set_title('Taux de Validation/Fondée', fontweight='bold', fontsize=14)
+            ax2.grid(True, alpha=0.3, axis='y')
+            ax2.set_ylim(0, max(values) * 1.2)
+
+            for bar, val in zip(bars, values):
+                height = bar.get_height()
+                ax2.text(bar.get_x() + bar.get_width()/2., height,
+                        f'{val:.1f}%', ha='center', va='bottom', fontweight='bold', fontsize=12)
+
+        # 3. Montants comparaison
+        if 'Montant demandé' in self.df_2023.columns and 'Montant demandé' in self.df_2025.columns:
+            mt_2023 = self.df_2023['Montant demandé'][self.df_2023['Montant demandé'] > 0].sum() / 1e6
+            mt_2025 = self.df_2025['Montant demandé'][self.df_2025['Montant demandé'] > 0].sum() / 1e6
+
+            bars = ax3.bar(years, [mt_2023, mt_2025], color=colors,
+                          alpha=0.8, edgecolor='black', linewidth=2)
+            ax3.set_ylabel('Montant Total (Millions DH)', fontweight='bold', fontsize=12)
+            ax3.set_title('Montant Total des Réclamations', fontweight='bold', fontsize=14)
+            ax3.grid(True, alpha=0.3, axis='y')
+
+            for bar, mt in zip(bars, [mt_2023, mt_2025]):
+                height = bar.get_height()
+                ax3.text(bar.get_x() + bar.get_width()/2., height,
+                        f'{mt:.1f}M', ha='center', va='bottom', fontweight='bold', fontsize=12)
+
+        # 4. Tableau comparatif
+        ax4.axis('off')
+
+        n_2025 = len(self.df_2025)
+        n_rejet = (self.df_2025['Decision_Modele'] == 'Rejet Auto').sum()
+        n_audit = (self.df_2025['Decision_Modele'] == 'Audit Humain').sum()
+        n_validation = (self.df_2025['Decision_Modele'] == 'Validation Auto').sum()
+        taux_auto = 100 * (n_rejet + n_validation) / n_2025
+
+        comparison_text = f"""
+📊 COMPARAISON DÉTAILLÉE
+
+2023 (Sans modèle):
+  • Volume:      {len(self.df_2023):,}
+  • Taux fondée: {taux_fondee_2023:.1f}%
+  • Traitement:  100% manuel
+  • Temps:       {len(self.df_2023) * self.temps_traitement_manuel / 60:,.0f} heures
+
+2025 (Avec modèle):
+  • Volume:           {n_2025:,}
+  • Validation auto:  {100*n_validation/n_2025:.1f}%
+  • Rejet auto:       {100*n_rejet/n_2025:.1f}%
+  • Audit humain:     {100*n_audit/n_2025:.1f}%
+  • Automatisation:   {taux_auto:.1f}%
+  • Temps économisé:  {(n_rejet + n_validation) * (self.temps_traitement_manuel - self.temps_traitement_auto) / 60:,.0f}h
+
+GAIN:
+  • {100 - 100*n_audit/n_2025:.1f}% de dossiers automatisés
+  • Réduction temps de {100 * (n_rejet + n_validation) * (self.temps_traitement_manuel - self.temps_traitement_auto) / (n_2025 * self.temps_traitement_manuel):.1f}%
+        """
+
+        ax4.text(0.05, 0.95, comparison_text, transform=ax4.transAxes,
+                fontsize=10, verticalalignment='top', family='monospace',
+                bbox=dict(boxstyle='round', facecolor='#E8F8F5', alpha=0.9,
+                         edgecolor='#16A085', linewidth=2))
+
+        plt.tight_layout()
+        output_path = self.output_dir / 'R2_comparison_2025_vs_2023.png'
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"✅ Sauvegardé: {output_path}")
+        plt.close()
+
+    def plot_gain_calculation(self):
+        """3. Calcul détaillé des gains avec logique GAIN NET"""
+        print("\n📊 Graphique 3: Calcul des gains (GAIN NET)...")
+
+        if 'Decision_Modele' not in self.df_2025.columns:
+            print("⚠️  Pas de décisions - Graphique ignoré")
+            return
+
+        fig = plt.figure(figsize=(18, 12))
+        fig.suptitle('CALCUL DÉTAILLÉ DES GAINS - 2025 (GAIN NET)', fontsize=18, fontweight='bold', y=0.98)
+
+        n_total = len(self.df_2025)
+        n_rejet = (self.df_2025['Decision_Modele'] == 'Rejet Auto').sum()
+        n_audit = (self.df_2025['Decision_Modele'] == 'Audit Humain').sum()
+        n_validation = (self.df_2025['Decision_Modele'] == 'Validation Auto').sum()
+        n_auto = n_rejet + n_validation
+
+        # Calcul GAIN NET (selon model_comparison_v2.py)
+        gain_brut = n_auto * self.prix_unitaire
+
+        # Calculer FP et FN si "Fondée" disponible
+        perte_fp = 0
+        perte_fn = 0
+        n_fp = 0
+        n_fn = 0
+
+        if 'Fondée' in self.df_2025.columns and 'Montant demandé' in self.df_2025.columns:
+            # Préparer données
+            df_temp = self.df_2025.copy()
+            df_temp['Fondee_bool'] = df_temp['Fondée'].apply(
+                lambda x: 1 if x in ['Oui', 1, True] else 0
+            )
+            df_temp['Prediction_bool'] = df_temp['Decision_Modele'].apply(
+                lambda x: 1 if x == 'Validation Auto' else 0
+            )
+
+            # Masques pour cas automatisés
+            mask_auto = (df_temp['Decision_Modele'] == 'Rejet Auto') | (df_temp['Decision_Modele'] == 'Validation Auto')
+            df_auto = df_temp[mask_auto]
+
+            # FP: Prédiction=1 mais Réalité=0 (accordé à tort)
+            fp_mask = (df_auto['Fondee_bool'] == 0) & (df_auto['Prediction_bool'] == 1)
+            # FN: Prédiction=0 mais Réalité=1 (refusé à tort)
+            fn_mask = (df_auto['Fondee_bool'] == 1) & (df_auto['Prediction_bool'] == 0)
+
+            n_fp = fp_mask.sum()
+            n_fn = fn_mask.sum()
+
+            # Nettoyer montants
+            montants_auto = df_auto['Montant demandé'].values
+            montants_clean = np.nan_to_num(montants_auto, nan=0.0, posinf=0.0, neginf=0.0)
+            montants_clean = np.clip(montants_clean, 0, np.percentile(montants_clean[montants_clean > 0], 99) if (montants_clean > 0).any() else 0)
+
+            # Calcul pertes
+            perte_fp = montants_clean[fp_mask.values].sum()
+            perte_fn = 2 * montants_clean[fn_mask.values].sum()  # Pénalité x2
+
+        gain_net = gain_brut - perte_fp - perte_fn
+
+        # Temps
+        temps_economise_min = n_auto * (self.temps_traitement_manuel - self.temps_traitement_auto)
+        temps_economise_h = temps_economise_min / 60
+        etp_libere = temps_economise_h / self.heures_annuelles_fte
+
+        temps_avant = n_total * self.temps_traitement_manuel / 60
+        temps_apres = n_audit * self.temps_traitement_manuel / 60 + n_auto * self.temps_traitement_auto / 60
+        reduction_temps_pct = 100 * (temps_avant - temps_apres) / temps_avant
+
+        # 1. Gain NET détaillé
+        ax1 = plt.subplot(2, 3, 1)
+        categories = ['Gain\nBrut', 'Perte\nFP', 'Perte\nFN', 'GAIN\nNET']
+        values_m = [gain_brut/1e6, -perte_fp/1e6, -perte_fn/1e6, gain_net/1e6]
+        colors_bars = ['#2ECC71', '#E74C3C', '#E67E22', '#27AE60']
+
+        bars = ax1.bar(categories, values_m, color=colors_bars,
+                      alpha=0.8, edgecolor='black', linewidth=2)
+
+        ax1.set_ylabel('Millions DH', fontweight='bold', fontsize=12)
+        ax1.set_title('GAIN NET (= Gain Brut - Pertes)', fontweight='bold', fontsize=14)
+        ax1.grid(True, alpha=0.3, axis='y')
+        ax1.axhline(y=0, color='black', linestyle='-', linewidth=1)
+
+        for bar, val in zip(bars, values_m):
+            height = bar.get_height()
+            va = 'bottom' if val >= 0 else 'top'
+            y_pos = height if val >= 0 else height
+            ax1.text(bar.get_x() + bar.get_width()/2., y_pos,
+                    f'{abs(val):.2f}M', ha='center', va=va, fontweight='bold', fontsize=10)
+
+        # 2. Temps économisé
+        ax2 = plt.subplot(2, 3, 2)
+        temps_data = ['Temps\navant', 'Temps\naprès', 'ÉCONOMIE']
+        temps_values = [temps_avant, temps_apres, temps_economise_h]
+
+        bars = ax2.bar(temps_data, temps_values,
+                      color=['#E74C3C', '#F39C12', '#2ECC71'],
+                      alpha=0.8, edgecolor='black', linewidth=2)
+
+        ax2.set_ylabel('Heures', fontweight='bold', fontsize=12)
+        ax2.set_title('GAIN TEMPS', fontweight='bold', fontsize=14)
+        ax2.grid(True, alpha=0.3, axis='y')
+
+        for bar, val in zip(bars, temps_values):
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{val:,.0f}h', ha='center', va='bottom', fontweight='bold', fontsize=11)
+
+        # 3. Récapitulatif GAIN NET
+        ax3 = plt.subplot(2, 3, 3)
+        ax3.axis('off')
+
+        recap_text = f"""
+💰 RÉCAPITULATIF GAIN NET 2025
+
+GAIN BRUT:
+  {n_auto:,} dossiers × {self.prix_unitaire} DH
+  = {gain_brut:,.0f} DH
+
+PERTES:
+  FP ({n_fp:,} cas): {perte_fp:,.0f} DH
+  FN ({n_fn:,} cas): {perte_fn:,.0f} DH
+
+GAIN NET:
+  {gain_net:,.0f} DH
+  = {gain_net/1e6:.2f} M DH
+
+TEMPS:
+  {etp_libere:.2f} ETP libérés
+        """
+
+        ax3.text(0.05, 0.95, recap_text, transform=ax3.transAxes,
+                fontsize=11, verticalalignment='top', family='monospace',
+                bbox=dict(boxstyle='round', facecolor='#D5F4E6', alpha=0.9,
+                         edgecolor='#2ECC71', linewidth=3))
+
+        # 4. Schéma GAIN NET
+        ax4 = plt.subplot(2, 3, 4)
+        ax4.axis('off')
+        ax4.set_xlim(0, 10)
+        ax4.set_ylim(0, 10)
+
+        ax4.text(5, 9.5, 'LOGIQUE DE CALCUL DU GAIN NET', ha='center',
+                fontsize=12, fontweight='bold')
+
+        # Étape 1: Gain Brut
+        rect1 = plt.Rectangle((0.5, 7), 4, 1.5, facecolor='#2ECC71',
+                              edgecolor='black', linewidth=2)
+        ax4.add_patch(rect1)
+        ax4.text(2.5, 7.75, f'1. GAIN BRUT', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+        ax4.text(2.5, 7.25, f'{n_auto:,} × {self.prix_unitaire} DH = {gain_brut/1e6:.2f}M', ha='center', va='center',
+                fontsize=9, fontweight='bold', color='white')
+
+        # Étape 2: Perte FP
+        rect2 = plt.Rectangle((5.5, 7), 4, 1.5, facecolor='#E74C3C',
+                              edgecolor='black', linewidth=2)
+        ax4.add_patch(rect2)
+        ax4.text(7.5, 7.75, f'2. PERTE FP', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+        ax4.text(7.5, 7.25, f'{n_fp} cas × montants = {perte_fp/1e6:.2f}M', ha='center', va='center',
+                fontsize=9, fontweight='bold', color='white')
+
+        # Étape 3: Perte FN
+        rect3 = plt.Rectangle((0.5, 5), 4, 1.5, facecolor='#E67E22',
+                              edgecolor='black', linewidth=2)
+        ax4.add_patch(rect3)
+        ax4.text(2.5, 5.75, f'3. PERTE FN (×2)', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+        ax4.text(2.5, 5.25, f'{n_fn} cas × 2 × montants = {perte_fn/1e6:.2f}M', ha='center', va='center',
+                fontsize=9, fontweight='bold', color='white')
+
+        # Formule
+        ax4.text(5, 4, 'GAIN NET = Gain Brut - Perte FP - Perte FN', ha='center',
+                fontsize=10, fontweight='bold',
+                bbox=dict(boxstyle='round', facecolor='#ECF0F1', edgecolor='black', linewidth=2))
+
+        # Résultat final
+        rect_final = plt.Rectangle((1.5, 1.5), 7, 2, facecolor='#27AE60',
+                                   edgecolor='black', linewidth=3)
+        ax4.add_patch(rect_final)
+        ax4.text(5, 2.8, 'GAIN NET FINAL', ha='center', va='center',
+                fontsize=13, fontweight='bold', color='white')
+        ax4.text(5, 2.2, f'{gain_net:,.0f} DH', ha='center', va='center',
+                fontsize=14, fontweight='bold', color='white')
+        ax4.text(5, 1.7, f'= {gain_net/1e6:.2f} Millions DH', ha='center', va='center',
+                fontsize=11, fontweight='bold', color='white')
+
+        # 5. Schéma explicatif du temps
+        ax5 = plt.subplot(2, 3, 5)
+        ax5.axis('off')
+        ax5.set_xlim(0, 10)
+        ax5.set_ylim(0, 10)
+
+        # Titre
+        ax5.text(5, 9, 'SCHÉMA DE CALCUL DU GAIN TEMPS', ha='center',
+                fontsize=12, fontweight='bold')
+
+        # Box 1: Temps par dossier
+        rect1 = plt.Rectangle((1, 6), 3, 2, facecolor='#3498DB',
+                              edgecolor='black', linewidth=2)
+        ax5.add_patch(rect1)
+        ax5.text(2.5, 7.5, 'Temps manuel', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+        ax5.text(2.5, 6.7, f'{self.temps_traitement_manuel} min', ha='center', va='center',
+                fontsize=11, fontweight='bold', color='white')
+
+        # Box 2: Temps auto
+        rect2 = plt.Rectangle((5.5, 6), 3, 2, facecolor='#E67E22',
+                              edgecolor='black', linewidth=2)
+        ax5.add_patch(rect2)
+        ax5.text(7, 7.5, 'Temps auto', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+        ax5.text(7, 6.7, f'{self.temps_traitement_auto} min', ha='center', va='center',
+                fontsize=11, fontweight='bold', color='white')
+
+        # Gain par dossier
+        ax5.text(4.7, 5, '−', ha='center', va='center',
+                fontsize=24, fontweight='bold')
+
+        rect_diff = plt.Rectangle((2.5, 4), 5, 0.8, facecolor='#9B59B6',
+                                  edgecolor='black', linewidth=2)
+        ax5.add_patch(rect_diff)
+        ax5.text(5, 4.4, f'Gain par dossier: {self.temps_traitement_manuel - self.temps_traitement_auto} min',
+                ha='center', va='center', fontsize=10, fontweight='bold', color='white')
+
+        # Multiplication
+        ax5.arrow(5, 3.8, 0, -0.5, head_width=0.3, head_length=0.2,
+                 fc='black', ec='black', linewidth=2)
+
+        ax5.text(5, 3, '×', ha='center', va='center',
+                fontsize=20, fontweight='bold')
+
+        ax5.text(5, 2.5, f'{n_auto:,} dossiers automatisés', ha='center', va='center',
+                fontsize=10, fontweight='bold')
+
+        # Résultat
+        rect_res = plt.Rectangle((2, 1), 6, 0.8, facecolor='#2ECC71',
+                                 edgecolor='black', linewidth=3)
+        ax5.add_patch(rect_res)
+        ax5.text(5, 1.4, f'GAIN: {temps_economise_h:,.0f} heures = {etp_libere:.2f} ETP',
+                ha='center', va='center', fontsize=11, fontweight='bold', color='white')
+
+        # 6. ROI et productivité
+        ax6 = plt.subplot(2, 3, 6)
+        ax6.axis('off')
+
+        roi_text = f"""
+💰 RETOUR SUR INVESTISSEMENT
+
+GAIN NET 2025:
+  • Gain Brut:    {gain_brut/1e6:.2f}M DH
+  • Perte FP:     {perte_fp/1e6:.2f}M DH
+  • Perte FN:     {perte_fn/1e6:.2f}M DH
+  • GAIN NET:     {gain_net/1e6:.2f}M DH
+
+TEMPS & CAPACITÉ:
+  • Temps économisé:  {temps_economise_h:,.0f}h
+  • ETP libérés:      {etp_libere:.2f}
+  • Automatisation:   {100*n_auto/n_total:.1f}%
+
+IMPACT:
+  ✓ Cohérence des décisions
+  ✓ Réduction des erreurs
+  ✓ Capacité libérée
+        """
+
+        ax6.text(0.05, 0.95, roi_text, transform=ax6.transAxes,
+                fontsize=10, verticalalignment='top', family='monospace',
+                bbox=dict(boxstyle='round', facecolor='#FEF9E7', alpha=0.9,
+                         edgecolor='#F39C12', linewidth=2))
+
+        plt.tight_layout()
+        output_path = self.output_dir / 'R3_gain_calculation_detailed.png'
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"✅ Sauvegardé: {output_path}")
+        plt.close()
+
+    def plot_performance_metrics_2025(self):
+        """4. Métriques de performance détaillées sur 2025"""
+        print("\n📊 Graphique 4: Métriques de performance 2025...")
+
+        if 'Decision_Modele' not in self.df_2025.columns:
+            print("⚠️  Pas de décisions - Graphique ignoré")
+            return
+
+        fig = plt.figure(figsize=(18, 10))
+        fig.suptitle('MÉTRIQUES DE PERFORMANCE DÉTAILLÉES - 2025',
+                     fontsize=18, fontweight='bold', y=0.98)
+
+        # 1. Distribution par famille
+        ax1 = plt.subplot(2, 3, 1)
+        if 'Famille Produit' in self.df_2025.columns:
+            top_families = self.df_2025['Famille Produit'].value_counts().head(8)
+
+            # Calculer taux de validation par famille
+            validation_rates = []
+            for famille in top_families.index:
+                df_fam = self.df_2025[self.df_2025['Famille Produit'] == famille]
+                n_val = (df_fam['Decision_Modele'] == 'Validation Auto').sum()
+                rate = 100 * n_val / len(df_fam)
+                validation_rates.append(rate)
+
+            colors = plt.cm.RdYlGn(np.linspace(0.3, 0.9, len(validation_rates)))
+            bars = ax1.barh(range(len(top_families)), validation_rates, color=colors,
+                           edgecolor='black', linewidth=1)
+
+            ax1.set_yticks(range(len(top_families)))
+            ax1.set_yticklabels(top_families.index, fontsize=9)
+            ax1.set_xlabel('% Validation Auto', fontweight='bold', fontsize=11)
+            ax1.set_title('Taux Validation par Famille', fontweight='bold', fontsize=13)
+            ax1.grid(True, alpha=0.3, axis='x')
+
+            for bar, rate in zip(bars, validation_rates):
+                width = bar.get_width()
+                ax1.text(width + 1, bar.get_y() + bar.get_height()/2.,
+                        f'{rate:.1f}%', ha='left', va='center', fontsize=9)
+
+        # 2. Distribution par segment
+        ax2 = plt.subplot(2, 3, 2)
+        if 'Segment' in self.df_2025.columns:
+            segment_counts = self.df_2025['Segment'].value_counts()
+
+            colors = plt.cm.Set3(range(len(segment_counts)))
+            wedges, texts, autotexts = ax2.pie(segment_counts.values,
+                                                labels=segment_counts.index,
+                                                autopct='%1.1f%%', colors=colors,
+                                                startangle=90, textprops={'fontsize': 9})
+
+            for autotext in autotexts:
+                autotext.set_color('white')
+                autotext.set_fontweight('bold')
+
+            ax2.set_title('Répartition par Segment', fontweight='bold', fontsize=13)
+
+        # 3. Montant moyen par décision
+        ax3 = plt.subplot(2, 3, 3)
+        if 'Montant demandé' in self.df_2025.columns:
+            decisions = ['Rejet Auto', 'Audit Humain', 'Validation Auto']
+            moyennes = []
+            for dec in decisions:
+                df_dec = self.df_2025[self.df_2025['Decision_Modele'] == dec]
+                moy = df_dec['Montant demandé'][df_dec['Montant demandé'] > 0].mean()
+                moyennes.append(moy)
+
+            colors = ['#E74C3C', '#F39C12', '#2ECC71']
+            bars = ax3.bar(range(len(decisions)), moyennes, color=colors,
+                          alpha=0.8, edgecolor='black', linewidth=2)
+
+            ax3.set_xticks(range(len(decisions)))
+            ax3.set_xticklabels(decisions, rotation=15, fontsize=10)
+            ax3.set_ylabel('Montant Moyen (DH)', fontweight='bold', fontsize=11)
+            ax3.set_title('Montant Moyen par Décision', fontweight='bold', fontsize=13)
+            ax3.grid(True, alpha=0.3, axis='y')
+
+            for bar, moy in zip(bars, moyennes):
+                height = bar.get_height()
+                ax3.text(bar.get_x() + bar.get_width()/2., height,
+                        f'{moy:,.0f}', ha='center', va='bottom', fontweight='bold', fontsize=9)
+
+        # 4. Distribution délais par décision
+        ax4 = plt.subplot(2, 3, 4)
+        if 'Délai estimé' in self.df_2025.columns:
+            for decision, color in [('Rejet Auto', '#E74C3C'),
+                                    ('Validation Auto', '#2ECC71')]:
+                df_dec = self.df_2025[self.df_2025['Decision_Modele'] == decision]
+                data = df_dec['Délai estimé'][df_dec['Délai estimé'] > 0]
+                if len(data) > 0:
+                    # Limiter aux percentiles
+                    data = data[data <= data.quantile(0.95)]
+                    ax4.hist(data, bins=30, alpha=0.6, label=decision, color=color)
+
+            ax4.set_xlabel('Délai estimé (jours)', fontweight='bold', fontsize=11)
+            ax4.set_ylabel('Fréquence', fontweight='bold', fontsize=11)
+            ax4.set_title('Distribution des Délais', fontweight='bold', fontsize=13)
+            ax4.legend()
+            ax4.grid(True, alpha=0.3)
+
+        # 5. PNB vs Ancienneté (validations)
+        ax5 = plt.subplot(2, 3, 5)
+        if ('PNB analytique (vision commerciale) cumulé' in self.df_2025.columns and
+            'anciennete_annees' in self.df_2025.columns):
+            df_val = self.df_2025[self.df_2025['Decision_Modele'] == 'Validation Auto']
+            df_val_clean = df_val[
+                (df_val['PNB analytique (vision commerciale) cumulé'] > 0) &
+                (df_val['anciennete_annees'] > 0)
+            ]
+
+            if len(df_val_clean) > 0:
+                ax5.scatter(df_val_clean['anciennete_annees'],
+                           df_val_clean['PNB analytique (vision commerciale) cumulé'],
+                           alpha=0.5, s=30, color='#2ECC71', edgecolor='black', linewidth=0.5)
+
+                ax5.set_xlabel('Ancienneté (années)', fontweight='bold', fontsize=11)
+                ax5.set_ylabel('PNB cumulé (DH)', fontweight='bold', fontsize=11)
+                ax5.set_title('PNB vs Ancienneté (Validations)', fontweight='bold', fontsize=13)
+                ax5.grid(True, alpha=0.3)
+
+        # 6. Matrice de confusion (si Fondée disponible)
+        ax6 = plt.subplot(2, 3, 6)
+        ax6.axis('off')
+
+        if 'Fondée' in self.df_2025.columns:
+            # Calculer matrice de confusion
+            df_2025_copy = self.df_2025.copy()
+            df_2025_copy['Fondee_bool'] = df_2025_copy['Fondée'].apply(
+                lambda x: 1 if x in ['Oui', 1, True] else 0
+            )
+            df_2025_copy['Validation_bool'] = df_2025_copy['Decision_Modele'].apply(
+                lambda x: 1 if x == 'Validation Auto' else 0
+            )
+
+            vp = ((df_2025_copy['Fondee_bool'] == 1) & (df_2025_copy['Validation_bool'] == 1)).sum()
+            vn = ((df_2025_copy['Fondee_bool'] == 0) & (df_2025_copy['Validation_bool'] == 0)).sum()
+            fp = ((df_2025_copy['Fondee_bool'] == 0) & (df_2025_copy['Validation_bool'] == 1)).sum()
+            fn = ((df_2025_copy['Fondee_bool'] == 1) & (df_2025_copy['Validation_bool'] == 0)).sum()
+
+            precision = vp / (vp + fp) if (vp + fp) > 0 else 0
+            recall = vp / (vp + fn) if (vp + fn) > 0 else 0
+            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+
+            metrics_text = f"""
+📊 MÉTRIQUES DE PERFORMANCE
+
+Matrice de confusion:
+  VP (Vrai Positif):    {vp:,}
+  VN (Vrai Négatif):    {vn:,}
+  FP (Faux Positif):    {fp:,}
+  FN (Faux Négatif):    {fn:,}
+
+Scores:
+  Précision: {100*precision:.1f}%
+  Rappel:    {100*recall:.1f}%
+  F1-Score:  {100*f1:.1f}%
+
+Exactitude:
+  {100*(vp+vn)/(vp+vn+fp+fn):.1f}%
+            """
+        else:
+            metrics_text = """
+📊 MÉTRIQUES CLÉS
+
+Décisions traitées:
+  • Automatiquement
+  • Cohérence élevée
+  • Traçabilité totale
+
+Avantages:
+  ✓ Rapidité
+  ✓ Objectivité
+  ✓ Scalabilité
+            """
+
+        ax6.text(0.05, 0.95, metrics_text, transform=ax6.transAxes,
+                fontsize=10, verticalalignment='top', family='monospace',
+                bbox=dict(boxstyle='round', facecolor='#EBF5FB', alpha=0.9,
+                         edgecolor='#3498DB', linewidth=2))
+
+        plt.tight_layout()
+        output_path = self.output_dir / 'R4_performance_metrics_2025.png'
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"✅ Sauvegardé: {output_path}")
+        plt.close()
+
+    def plot_performance_2023(self):
+        """5. Performance 2023 (si données disponibles)"""
+        print("\n📊 Graphique 5: Performance 2023...")
+
+        if self.df_2023 is None:
+            print("⚠️  Données 2023 manquantes - Graphique ignoré")
+            return
+
+        if 'Decision_Modele' not in self.df_2023.columns:
+            print("⚠️  Pas de décisions dans 2023 - Graphique ignoré")
+            return
+
+        fig = plt.figure(figsize=(18, 10))
+        fig.suptitle('PERFORMANCE DU MODÈLE SUR 2023', fontsize=18, fontweight='bold', y=0.98)
+
+        n_total = len(self.df_2023)
+        n_rejet = (self.df_2023['Decision_Modele'] == 'Rejet Auto').sum()
+        n_audit = (self.df_2023['Decision_Modele'] == 'Audit Humain').sum()
+        n_validation = (self.df_2023['Decision_Modele'] == 'Validation Auto').sum()
+
+        # 1. Pie chart des décisions
+        ax1 = plt.subplot(2, 3, 1)
+        sizes = [n_rejet, n_audit, n_validation]
+        labels = ['Rejet Auto', 'Audit Humain', 'Validation Auto']
+        colors = ['#E74C3C', '#F39C12', '#2ECC71']
+        explode = (0.05, 0.05, 0.1)
+
+        wedges, texts, autotexts = ax1.pie(sizes, explode=explode, labels=labels,
+                                            autopct='%1.1f%%', colors=colors,
+                                            shadow=True, startangle=90,
+                                            textprops={'fontsize': 11, 'weight': 'bold'})
+
+        for autotext in autotexts:
+            autotext.set_color('white')
+            autotext.set_fontsize(12)
+
+        ax1.set_title('Distribution des Décisions', fontweight='bold', fontsize=13)
+
+        # 2. Barres avec nombres
+        ax2 = plt.subplot(2, 3, 2)
+        bars = ax2.bar(labels, sizes, color=colors, alpha=0.8, edgecolor='black', linewidth=2)
+        ax2.set_ylabel('Nombre de réclamations', fontweight='bold', fontsize=11)
+        ax2.set_title('Nombre par Décision', fontweight='bold', fontsize=13)
+        ax2.grid(True, alpha=0.3, axis='y')
+
+        for bar, count in zip(bars, sizes):
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{int(count):,}', ha='center', va='bottom', fontweight='bold', fontsize=11)
+
+        # 3. Taux automatisation
+        ax3 = plt.subplot(2, 3, 3)
+        taux_auto = 100 * (n_rejet + n_validation) / n_total
+        taux_audit = 100 * n_audit / n_total
+
+        bars = ax3.barh(['Automatisé', 'Audit Humain'],
+                       [taux_auto, taux_audit],
+                       color=['#2ECC71', '#F39C12'], alpha=0.8, edgecolor='black', linewidth=2)
+
+        ax3.set_xlabel('Pourcentage (%)', fontweight='bold', fontsize=11)
+        ax3.set_title('Taux d\'Automatisation', fontweight='bold', fontsize=13)
+        ax3.grid(True, alpha=0.3, axis='x')
+
+        for bar in bars:
+            width = bar.get_width()
+            ax3.text(width + 1, bar.get_y() + bar.get_height()/2.,
+                    f'{width:.1f}%', ha='left', va='center', fontweight='bold', fontsize=11)
+
+        # 4. Matrice de confusion (si Fondée disponible)
+        ax4 = plt.subplot(2, 3, 4)
+        ax4.axis('off')
+
+        if 'Fondée' in self.df_2023.columns:
+            df_2023_copy = self.df_2023.copy()
+            df_2023_copy['Fondee_bool'] = df_2023_copy['Fondée'].apply(
+                lambda x: 1 if x in ['Oui', 1, True] else 0
+            )
+            df_2023_copy['Validation_bool'] = df_2023_copy['Decision_Modele'].apply(
+                lambda x: 1 if x == 'Validation Auto' else 0
+            )
+
+            vp = ((df_2023_copy['Fondee_bool'] == 1) & (df_2023_copy['Validation_bool'] == 1)).sum()
+            vn = ((df_2023_copy['Fondee_bool'] == 0) & (df_2023_copy['Validation_bool'] == 0)).sum()
+            fp = ((df_2023_copy['Fondee_bool'] == 0) & (df_2023_copy['Validation_bool'] == 1)).sum()
+            fn = ((df_2023_copy['Fondee_bool'] == 1) & (df_2023_copy['Validation_bool'] == 0)).sum()
+
+            precision = vp / (vp + fp) if (vp + fp) > 0 else 0
+            recall = vp / (vp + fn) if (vp + fn) > 0 else 0
+            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+
+            metrics_text = f"""
+📊 MÉTRIQUES DE PERFORMANCE 2023
+
+Matrice de confusion:
+  VP (Vrai Positif):    {vp:,}
+  VN (Vrai Négatif):    {vn:,}
+  FP (Faux Positif):    {fp:,}
+  FN (Faux Négatif):    {fn:,}
+
+Scores:
+  Précision: {100*precision:.1f}%
+  Rappel:    {100*recall:.1f}%
+  F1-Score:  {100*f1:.1f}%
+
+Exactitude:
+  {100*(vp+vn)/(vp+vn+fp+fn):.1f}%
+            """
+        else:
+            metrics_text = f"""
+📊 STATISTIQUES 2023
+
+Total: {n_total:,}
+
+Décisions:
+  Rejet:      {n_rejet:,}
+  Audit:      {n_audit:,}
+  Validation: {n_validation:,}
+
+Automatisation:
+  {taux_auto:.1f}%
+            """
+
+        ax4.text(0.05, 0.95, metrics_text, transform=ax4.transAxes,
+                fontsize=10, verticalalignment='top', family='monospace',
+                bbox=dict(boxstyle='round', facecolor='#EBF5FB', alpha=0.9,
+                         edgecolor='#3498DB', linewidth=2))
+
+        # 5. Distribution probabilités
+        ax5 = plt.subplot(2, 3, 5)
+        if 'Probabilite_Fondee' in self.df_2023.columns:
+            for decision, color in [('Rejet Auto', '#E74C3C'),
+                                    ('Audit Humain', '#F39C12'),
+                                    ('Validation Auto', '#2ECC71')]:
+                data = self.df_2023[self.df_2023['Decision_Modele'] == decision]['Probabilite_Fondee']
+                if len(data) > 0:
+                    ax5.hist(data, bins=30, alpha=0.6, label=decision, color=color)
+
+            ax5.set_xlabel('Probabilité Fondée', fontweight='bold', fontsize=11)
+            ax5.set_ylabel('Fréquence', fontweight='bold', fontsize=11)
+            ax5.set_title('Distribution des Probabilités', fontweight='bold', fontsize=13)
+            ax5.legend()
+            ax5.grid(True, alpha=0.3)
+
+        # 6. Statistiques récap
+        ax6 = plt.subplot(2, 3, 6)
+        ax6.axis('off')
+
+        stats_text = f"""
+📊 STATISTIQUES CLÉS 2023
+
+Total réclamations: {n_total:,}
+
+DÉCISIONS:
+  • Rejet Auto:      {n_rejet:,} ({100*n_rejet/n_total:.1f}%)
+  • Audit Humain:    {n_audit:,} ({100*n_audit/n_total:.1f}%)
+  • Validation Auto: {n_validation:,} ({100*n_validation/n_total:.1f}%)
+
+AUTOMATISATION:
+  • Taux: {taux_auto:.1f}%
+  • Dossiers automatisés: {n_rejet + n_validation:,}
+        """
+
+        ax6.text(0.1, 0.9, stats_text, transform=ax6.transAxes,
+                fontsize=11, verticalalignment='top', family='monospace',
+                bbox=dict(boxstyle='round', facecolor='#ECF0F1', alpha=0.8,
+                         edgecolor='black', linewidth=2))
+
+        plt.tight_layout()
+        output_path = self.output_dir / 'R5_performance_2023.png'
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"✅ Sauvegardé: {output_path}")
+        plt.close()
+
+    def plot_gain_calculation_2023(self):
+        """6. Calcul des gains 2023 avec logique GAIN NET"""
+        print("\n📊 Graphique 6: Calcul des gains 2023 (GAIN NET)...")
+
+        if self.df_2023 is None:
+            print("⚠️  Données 2023 manquantes - Graphique ignoré")
+            return
+
+        if 'Decision_Modele' not in self.df_2023.columns:
+            print("⚠️  Pas de décisions dans 2023 - Graphique ignoré")
+            return
+
+        fig = plt.figure(figsize=(18, 12))
+        fig.suptitle('CALCUL DÉTAILLÉ DES GAINS - 2023 (GAIN NET)', fontsize=18, fontweight='bold', y=0.98)
+
+        n_total = len(self.df_2023)
+        n_rejet = (self.df_2023['Decision_Modele'] == 'Rejet Auto').sum()
+        n_audit = (self.df_2023['Decision_Modele'] == 'Audit Humain').sum()
+        n_validation = (self.df_2023['Decision_Modele'] == 'Validation Auto').sum()
+        n_auto = n_rejet + n_validation
+
+        # Calcul GAIN NET (selon model_comparison_v2.py)
+        gain_brut = n_auto * self.prix_unitaire
+
+        # Calculer FP et FN si "Fondée" disponible
+        perte_fp = 0
+        perte_fn = 0
+        n_fp = 0
+        n_fn = 0
+
+        if 'Fondée' in self.df_2023.columns and 'Montant demandé' in self.df_2023.columns:
+            # Préparer données
+            df_temp = self.df_2023.copy()
+            df_temp['Fondee_bool'] = df_temp['Fondée'].apply(
+                lambda x: 1 if x in ['Oui', 1, True] else 0
+            )
+            df_temp['Prediction_bool'] = df_temp['Decision_Modele'].apply(
+                lambda x: 1 if x == 'Validation Auto' else 0
+            )
+
+            # Masques pour cas automatisés
+            mask_auto = (df_temp['Decision_Modele'] == 'Rejet Auto') | (df_temp['Decision_Modele'] == 'Validation Auto')
+            df_auto = df_temp[mask_auto]
+
+            # FP: Prédiction=1 mais Réalité=0 (accordé à tort)
+            fp_mask = (df_auto['Fondee_bool'] == 0) & (df_auto['Prediction_bool'] == 1)
+            # FN: Prédiction=0 mais Réalité=1 (refusé à tort)
+            fn_mask = (df_auto['Fondee_bool'] == 1) & (df_auto['Prediction_bool'] == 0)
+
+            n_fp = fp_mask.sum()
+            n_fn = fn_mask.sum()
+
+            # Nettoyer montants
+            montants_auto = df_auto['Montant demandé'].values
+            montants_clean = np.nan_to_num(montants_auto, nan=0.0, posinf=0.0, neginf=0.0)
+            montants_clean = np.clip(montants_clean, 0, np.percentile(montants_clean[montants_clean > 0], 99) if (montants_clean > 0).any() else 0)
+
+            # Calcul pertes
+            perte_fp = montants_clean[fp_mask.values].sum()
+            perte_fn = 2 * montants_clean[fn_mask.values].sum()  # Pénalité x2
+
+        gain_net = gain_brut - perte_fp - perte_fn
+
+        # Temps
+        temps_economise_min = n_auto * (self.temps_traitement_manuel - self.temps_traitement_auto)
+        temps_economise_h = temps_economise_min / 60
+        etp_libere = temps_economise_h / self.heures_annuelles_fte
+
+        temps_avant = n_total * self.temps_traitement_manuel / 60
+        temps_apres = n_audit * self.temps_traitement_manuel / 60 + n_auto * self.temps_traitement_auto / 60
+        reduction_temps_pct = 100 * (temps_avant - temps_apres) / temps_avant
+
+        # 1. Gain NET détaillé
+        ax1 = plt.subplot(2, 3, 1)
+        categories = ['Gain\nBrut', 'Perte\nFP', 'Perte\nFN', 'GAIN\nNET']
+        values_m = [gain_brut/1e6, -perte_fp/1e6, -perte_fn/1e6, gain_net/1e6]
+        colors_bars = ['#2ECC71', '#E74C3C', '#E67E22', '#27AE60']
+
+        bars = ax1.bar(categories, values_m, color=colors_bars,
+                      alpha=0.8, edgecolor='black', linewidth=2)
+
+        ax1.set_ylabel('Millions DH', fontweight='bold', fontsize=12)
+        ax1.set_title('GAIN NET 2023 (= Gain Brut - Pertes)', fontweight='bold', fontsize=14)
+        ax1.grid(True, alpha=0.3, axis='y')
+        ax1.axhline(y=0, color='black', linestyle='-', linewidth=1)
+
+        for bar, val in zip(bars, values_m):
+            height = bar.get_height()
+            va = 'bottom' if val >= 0 else 'top'
+            y_pos = height if val >= 0 else height
+            ax1.text(bar.get_x() + bar.get_width()/2., y_pos,
+                    f'{abs(val):.2f}M', ha='center', va=va, fontweight='bold', fontsize=10)
+
+        # 2. Temps économisé
+        ax2 = plt.subplot(2, 3, 2)
+        temps_data = ['Temps\navant', 'Temps\naprès', 'ÉCONOMIE']
+        temps_values = [temps_avant, temps_apres, temps_economise_h]
+
+        bars = ax2.bar(temps_data, temps_values,
+                      color=['#E74C3C', '#F39C12', '#2ECC71'],
+                      alpha=0.8, edgecolor='black', linewidth=2)
+
+        ax2.set_ylabel('Heures', fontweight='bold', fontsize=12)
+        ax2.set_title('GAIN TEMPS 2023', fontweight='bold', fontsize=14)
+        ax2.grid(True, alpha=0.3, axis='y')
+
+        for bar, val in zip(bars, temps_values):
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{val:,.0f}h', ha='center', va='bottom', fontweight='bold', fontsize=11)
+
+        # 3. Récapitulatif GAIN NET
+        ax3 = plt.subplot(2, 3, 3)
+        ax3.axis('off')
+
+        recap_text = f"""
+💰 RÉCAPITULATIF GAIN NET 2023
+
+GAIN BRUT:
+  {n_auto:,} dossiers × {self.prix_unitaire} DH
+  = {gain_brut:,.0f} DH
+
+PERTES:
+  FP ({n_fp:,} cas): {perte_fp:,.0f} DH
+  FN ({n_fn:,} cas): {perte_fn:,.0f} DH
+
+GAIN NET:
+  {gain_net:,.0f} DH
+  = {gain_net/1e6:.2f} M DH
+
+TEMPS:
+  {etp_libere:.2f} ETP libérés
+        """
+
+        ax3.text(0.05, 0.95, recap_text, transform=ax3.transAxes,
+                fontsize=11, verticalalignment='top', family='monospace',
+                bbox=dict(boxstyle='round', facecolor='#D5F4E6', alpha=0.9,
+                         edgecolor='#2ECC71', linewidth=3))
+
+        # 4. Schéma GAIN NET
+        ax4 = plt.subplot(2, 3, 4)
+        ax4.axis('off')
+        ax4.set_xlim(0, 10)
+        ax4.set_ylim(0, 10)
+
+        ax4.text(5, 9.5, 'LOGIQUE DE CALCUL DU GAIN NET', ha='center',
+                fontsize=12, fontweight='bold')
+
+        # Étape 1: Gain Brut
+        rect1 = plt.Rectangle((0.5, 7), 4, 1.5, facecolor='#2ECC71',
+                              edgecolor='black', linewidth=2)
+        ax4.add_patch(rect1)
+        ax4.text(2.5, 7.75, f'1. GAIN BRUT', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+        ax4.text(2.5, 7.25, f'{n_auto:,} × {self.prix_unitaire} DH = {gain_brut/1e6:.2f}M', ha='center', va='center',
+                fontsize=9, fontweight='bold', color='white')
+
+        # Étape 2: Perte FP
+        rect2 = plt.Rectangle((5.5, 7), 4, 1.5, facecolor='#E74C3C',
+                              edgecolor='black', linewidth=2)
+        ax4.add_patch(rect2)
+        ax4.text(7.5, 7.75, f'2. PERTE FP', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+        ax4.text(7.5, 7.25, f'{n_fp} cas × montants = {perte_fp/1e6:.2f}M', ha='center', va='center',
+                fontsize=9, fontweight='bold', color='white')
+
+        # Étape 3: Perte FN
+        rect3 = plt.Rectangle((0.5, 5), 4, 1.5, facecolor='#E67E22',
+                              edgecolor='black', linewidth=2)
+        ax4.add_patch(rect3)
+        ax4.text(2.5, 5.75, f'3. PERTE FN (×2)', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+        ax4.text(2.5, 5.25, f'{n_fn} cas × 2 × montants = {perte_fn/1e6:.2f}M', ha='center', va='center',
+                fontsize=9, fontweight='bold', color='white')
+
+        # Formule
+        ax4.text(5, 4, 'GAIN NET = Gain Brut - Perte FP - Perte FN', ha='center',
+                fontsize=10, fontweight='bold',
+                bbox=dict(boxstyle='round', facecolor='#ECF0F1', edgecolor='black', linewidth=2))
+
+        # Résultat final
+        rect_final = plt.Rectangle((1.5, 1.5), 7, 2, facecolor='#27AE60',
+                                   edgecolor='black', linewidth=3)
+        ax4.add_patch(rect_final)
+        ax4.text(5, 2.8, 'GAIN NET FINAL', ha='center', va='center',
+                fontsize=13, fontweight='bold', color='white')
+        ax4.text(5, 2.2, f'{gain_net:,.0f} DH', ha='center', va='center',
+                fontsize=14, fontweight='bold', color='white')
+        ax4.text(5, 1.7, f'= {gain_net/1e6:.2f} Millions DH', ha='center', va='center',
+                fontsize=11, fontweight='bold', color='white')
+
+        # 5. Schéma calcul temps
+        ax5 = plt.subplot(2, 3, 5)
+        ax5.axis('off')
+        ax5.set_xlim(0, 10)
+        ax5.set_ylim(0, 10)
+
+        ax5.text(5, 9, 'LOGIQUE DE CALCUL DU GAIN TEMPS', ha='center',
+                fontsize=12, fontweight='bold')
+
+        # Box temps manuel
+        rect1 = plt.Rectangle((1, 6), 3, 2, facecolor='#3498DB',
+                              edgecolor='black', linewidth=2)
+        ax5.add_patch(rect1)
+        ax5.text(2.5, 7.5, 'Temps manuel', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+        ax5.text(2.5, 6.7, f'{self.temps_traitement_manuel} min', ha='center', va='center',
+                fontsize=11, fontweight='bold', color='white')
+
+        # Box temps auto
+        rect2 = plt.Rectangle((5.5, 6), 3, 2, facecolor='#E67E22',
+                              edgecolor='black', linewidth=2)
+        ax5.add_patch(rect2)
+        ax5.text(7, 7.5, 'Temps auto', ha='center', va='center',
+                fontsize=10, fontweight='bold', color='white')
+        ax5.text(7, 6.7, f'{self.temps_traitement_auto} min', ha='center', va='center',
+                fontsize=11, fontweight='bold', color='white')
+
+        # Gain par dossier
+        ax5.text(4.7, 5, '−', ha='center', va='center',
+                fontsize=24, fontweight='bold')
+
+        rect_diff = plt.Rectangle((2.5, 4), 5, 0.8, facecolor='#9B59B6',
+                                  edgecolor='black', linewidth=2)
+        ax5.add_patch(rect_diff)
+        ax5.text(5, 4.4, f'Gain/dossier: {self.temps_traitement_manuel - self.temps_traitement_auto} min',
+                ha='center', va='center', fontsize=10, fontweight='bold', color='white')
+
+        # Multiplication
+        ax5.arrow(5, 3.8, 0, -0.5, head_width=0.3, head_length=0.2,
+                 fc='black', ec='black', linewidth=2)
+
+        ax5.text(5, 3, '×', ha='center', va='center',
+                fontsize=20, fontweight='bold')
+
+        ax5.text(5, 2.5, f'{n_auto:,} dossiers', ha='center', va='center',
+                fontsize=10, fontweight='bold')
+
+        # Résultat
+        rect_res = plt.Rectangle((2, 1), 6, 0.8, facecolor='#2ECC71',
+                                 edgecolor='black', linewidth=3)
+        ax5.add_patch(rect_res)
+        ax5.text(5, 1.4, f'GAIN: {temps_economise_h:,.0f}h = {etp_libere:.2f} ETP',
+                ha='center', va='center', fontsize=11, fontweight='bold', color='white')
+
+        # 6. ROI et productivité
+        ax6 = plt.subplot(2, 3, 6)
+        ax6.axis('off')
+
+        roi_text = f"""
+💰 RETOUR SUR INVESTISSEMENT
+
+GAIN NET 2023:
+  • Gain Brut:    {gain_brut/1e6:.2f}M DH
+  • Perte FP:     {perte_fp/1e6:.2f}M DH
+  • Perte FN:     {perte_fn/1e6:.2f}M DH
+  • GAIN NET:     {gain_net/1e6:.2f}M DH
+
+TEMPS & CAPACITÉ:
+  • Temps économisé:  {temps_economise_h:,.0f}h
+  • ETP libérés:      {etp_libere:.2f}
+  • Automatisation:   {100*n_auto/n_total:.1f}%
+
+IMPACT:
+  ✓ Cohérence des décisions
+  ✓ Réduction des erreurs
+  ✓ Capacité libérée
+        """
+
+        ax6.text(0.05, 0.95, roi_text, transform=ax6.transAxes,
+                fontsize=10, verticalalignment='top', family='monospace',
+                bbox=dict(boxstyle='round', facecolor='#FEF9E7', alpha=0.9,
+                         edgecolor='#F39C12', linewidth=2))
+
+        plt.tight_layout()
+        output_path = self.output_dir / 'R6_gain_calculation_2023.png'
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"✅ Sauvegardé: {output_path}")
+        plt.close()
+
+    def generate_summary_report(self):
+        """Générer rapport texte"""
+        print("\n📄 Génération du rapport récapitulatif...")
+
+        report_path = self.output_dir / f'rapport_resultats_{datetime.now().strftime("%Y%m%d_%H%M%S")}.txt'
+
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write("="*80 + "\n")
+            f.write("RAPPORT D'ANALYSE DES RÉSULTATS\n")
+            f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("="*80 + "\n\n")
+
+            # Données 2025
+            if 'Decision_Modele' in self.df_2025.columns:
+                n_total = len(self.df_2025)
+                n_rejet = (self.df_2025['Decision_Modele'] == 'Rejet Auto').sum()
+                n_audit = (self.df_2025['Decision_Modele'] == 'Audit Humain').sum()
+                n_validation = (self.df_2025['Decision_Modele'] == 'Validation Auto').sum()
+                n_auto = n_rejet + n_validation
+
+                f.write("RÉSULTATS 2025:\n")
+                f.write("-" * 80 + "\n")
+                f.write(f"Total réclamations:    {n_total:,}\n")
+                f.write(f"Rejet Auto:            {n_rejet:,} ({100*n_rejet/n_total:.1f}%)\n")
+                f.write(f"Audit Humain:          {n_audit:,} ({100*n_audit/n_total:.1f}%)\n")
+                f.write(f"Validation Auto:       {n_validation:,} ({100*n_validation/n_total:.1f}%)\n")
+                f.write(f"Taux automatisation:   {100*n_auto/n_total:.1f}%\n\n")
+
+                # Gains 2025 - GAIN NET
+                gain_brut = n_auto * self.prix_unitaire
+                perte_fp = 0
+                perte_fn = 0
+
+                if 'Fondée' in self.df_2025.columns and 'Montant demandé' in self.df_2025.columns:
+                    df_temp = self.df_2025.copy()
+                    df_temp['Fondee_bool'] = df_temp['Fondée'].apply(lambda x: 1 if x in ['Oui', 1, True] else 0)
+                    df_temp['Prediction_bool'] = df_temp['Decision_Modele'].apply(lambda x: 1 if x == 'Validation Auto' else 0)
+                    mask_auto = (df_temp['Decision_Modele'] == 'Rejet Auto') | (df_temp['Decision_Modele'] == 'Validation Auto')
+                    df_auto = df_temp[mask_auto]
+                    fp_mask = (df_auto['Fondee_bool'] == 0) & (df_auto['Prediction_bool'] == 1)
+                    fn_mask = (df_auto['Fondee_bool'] == 1) & (df_auto['Prediction_bool'] == 0)
+                    montants_auto = df_auto['Montant demandé'].values
+                    montants_clean = np.nan_to_num(montants_auto, nan=0.0, posinf=0.0, neginf=0.0)
+                    montants_clean = np.clip(montants_clean, 0, np.percentile(montants_clean[montants_clean > 0], 99) if (montants_clean > 0).any() else 0)
+                    perte_fp = montants_clean[fp_mask.values].sum()
+                    perte_fn = 2 * montants_clean[fn_mask.values].sum()
+
+                gain_net = gain_brut - perte_fp - perte_fn
+                temps_economise_h = n_auto * (self.temps_traitement_manuel - self.temps_traitement_auto) / 60
+                etp_libere = temps_economise_h / self.heures_annuelles_fte
+
+                f.write("GAINS CALCULÉS 2025 (GAIN NET):\n")
+                f.write("-" * 80 + "\n")
+                f.write(f"Gain brut:             {gain_brut:,.0f} DH ({gain_brut/1e6:.2f}M DH)\n")
+                f.write(f"Perte FP:              {perte_fp:,.0f} DH ({perte_fp/1e6:.2f}M DH)\n")
+                f.write(f"Perte FN:              {perte_fn:,.0f} DH ({perte_fn/1e6:.2f}M DH)\n")
+                f.write(f"GAIN NET:              {gain_net:,.0f} DH ({gain_net/1e6:.2f}M DH)\n")
+                f.write(f"Temps économisé:       {temps_economise_h:,.0f} heures\n")
+                f.write(f"ETP libérés:           {etp_libere:.2f}\n\n")
+
+            # Données 2023
+            if self.df_2023 is not None and 'Decision_Modele' in self.df_2023.columns:
+                n_total_2023 = len(self.df_2023)
+                n_rejet_2023 = (self.df_2023['Decision_Modele'] == 'Rejet Auto').sum()
+                n_audit_2023 = (self.df_2023['Decision_Modele'] == 'Audit Humain').sum()
+                n_validation_2023 = (self.df_2023['Decision_Modele'] == 'Validation Auto').sum()
+                n_auto_2023 = n_rejet_2023 + n_validation_2023
+
+                f.write("RÉSULTATS 2023:\n")
+                f.write("-" * 80 + "\n")
+                f.write(f"Total réclamations:    {n_total_2023:,}\n")
+                f.write(f"Rejet Auto:            {n_rejet_2023:,} ({100*n_rejet_2023/n_total_2023:.1f}%)\n")
+                f.write(f"Audit Humain:          {n_audit_2023:,} ({100*n_audit_2023/n_total_2023:.1f}%)\n")
+                f.write(f"Validation Auto:       {n_validation_2023:,} ({100*n_validation_2023/n_total_2023:.1f}%)\n")
+                f.write(f"Taux automatisation:   {100*n_auto_2023/n_total_2023:.1f}%\n\n")
+
+                # Gains 2023 - GAIN NET
+                gain_brut_2023 = n_auto_2023 * self.prix_unitaire
+                perte_fp_2023 = 0
+                perte_fn_2023 = 0
+
+                if 'Fondée' in self.df_2023.columns and 'Montant demandé' in self.df_2023.columns:
+                    df_temp = self.df_2023.copy()
+                    df_temp['Fondee_bool'] = df_temp['Fondée'].apply(lambda x: 1 if x in ['Oui', 1, True] else 0)
+                    df_temp['Prediction_bool'] = df_temp['Decision_Modele'].apply(lambda x: 1 if x == 'Validation Auto' else 0)
+                    mask_auto = (df_temp['Decision_Modele'] == 'Rejet Auto') | (df_temp['Decision_Modele'] == 'Validation Auto')
+                    df_auto = df_temp[mask_auto]
+                    fp_mask = (df_auto['Fondee_bool'] == 0) & (df_auto['Prediction_bool'] == 1)
+                    fn_mask = (df_auto['Fondee_bool'] == 1) & (df_auto['Prediction_bool'] == 0)
+                    montants_auto = df_auto['Montant demandé'].values
+                    montants_clean = np.nan_to_num(montants_auto, nan=0.0, posinf=0.0, neginf=0.0)
+                    montants_clean = np.clip(montants_clean, 0, np.percentile(montants_clean[montants_clean > 0], 99) if (montants_clean > 0).any() else 0)
+                    perte_fp_2023 = montants_clean[fp_mask.values].sum()
+                    perte_fn_2023 = 2 * montants_clean[fn_mask.values].sum()
+
+                gain_net_2023 = gain_brut_2023 - perte_fp_2023 - perte_fn_2023
+                temps_economise_h_2023 = n_auto_2023 * (self.temps_traitement_manuel - self.temps_traitement_auto) / 60
+                etp_libere_2023 = temps_economise_h_2023 / self.heures_annuelles_fte
+
+                f.write("GAINS CALCULÉS 2023 (GAIN NET):\n")
+                f.write("-" * 80 + "\n")
+                f.write(f"Gain brut:             {gain_brut_2023:,.0f} DH ({gain_brut_2023/1e6:.2f}M DH)\n")
+                f.write(f"Perte FP:              {perte_fp_2023:,.0f} DH ({perte_fp_2023/1e6:.2f}M DH)\n")
+                f.write(f"Perte FN:              {perte_fn_2023:,.0f} DH ({perte_fn_2023/1e6:.2f}M DH)\n")
+                f.write(f"GAIN NET:              {gain_net_2023:,.0f} DH ({gain_net_2023/1e6:.2f}M DH)\n")
+                f.write(f"Temps économisé:       {temps_economise_h_2023:,.0f} heures\n")
+                f.write(f"ETP libérés:           {etp_libere_2023:.2f}\n\n")
+
+            f.write("FICHIERS GÉNÉRÉS:\n")
+            f.write("-" * 80 + "\n")
+            f.write("1. R1_decisions_distribution_2025.png - Décisions 2025\n")
+            f.write("2. R2_comparison_2025_vs_2023.png - Comparaison\n")
+            f.write("3. R3_gain_calculation_detailed.png - Gains 2025\n")
+            f.write("4. R4_performance_metrics_2025.png - Performance 2025\n")
+            f.write("5. R5_performance_2023.png - Performance 2023\n")
+            f.write("6. R6_gain_calculation_2023.png - Gains 2023\n")
+
+        print(f"✅ Rapport sauvegardé: {report_path}")
+
+    def run(self):
+        """Exécuter la génération complète"""
+        self.load_data()
+
+        # Graphiques 2025
+        self.plot_decisions_distribution_2025()
+        self.plot_gain_calculation()
+        self.plot_performance_metrics_2025()
+
+        # Graphiques 2023 (si disponibles)
+        if self.df_2023 is not None:
+            self.plot_performance_2023()
+            self.plot_gain_calculation_2023()
+
+        # Comparaison
+        if self.df_2023 is not None:
+            self.plot_comparison_2025_vs_2023()
+
+        # Rapport
+        self.generate_summary_report()
+
+        print("\n" + "="*80)
+        print("✅ GÉNÉRATION DES RÉSULTATS TERMINÉE")
+        print("="*80)
+        print(f"\n📂 Tous les fichiers sont dans: {self.output_dir}")
+        print("\nFichiers générés:")
+        print("  - R1: Distribution décisions 2025")
+        print("  - R2: Comparaison 2025 vs 2023")
+        print("  - R3: Gain détaillé 2025 (avec schémas)")
+        print("  - R4: Performance 2025")
+        if self.df_2023 is not None:
+            print("  - R5: Performance 2023")
+            print("  - R6: Gain détaillé 2023 (avec schémas)")
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Générer visualisations des résultats')
+    parser.add_argument('--data_2025', type=str, required=True,
+                       help='Fichier Excel 2025 avec inférence (Decision_Modele)')
+    parser.add_argument('--data_2023', type=str,
+                       help='Fichier Excel 2023 (optionnel, pour comparaison)')
+
+    args = parser.parse_args()
+
+    visualizer = ResultsVisualizer(args.data_2025, args.data_2023)
+    visualizer.run()
+
+
+if __name__ == '__main__':
+    main()

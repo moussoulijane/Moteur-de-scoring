@@ -1,0 +1,45 @@
+================================================================================
+RAPPORT COMPARAISON MODÈLES V2 - FEATURES PRODUCTION-READY
+Date: 2026-01-23 00:25:11
+================================================================================
+
+FEATURES UTILISÉES:
+- Uniquement des colonnes disponibles en temps réel
+- Montant demandé, Délai estimé, Famille Produit, Catégorie, Sous-catégorie
+- Segment, Marché, anciennete_annees, PNB cumulé (dernier semestre)
+- Taux de fondée calculés sur 2024 (statistiquement renforcés)
+- Ratios, interactions, log transformations (incluant PNB)
+
+NOMBRE TOTAL DE FEATURES: 29
+
+STATISTIQUES ROBUSTES (>= 30 cas):
+- Familles avec taux fondée: 4
+- Catégories avec taux fondée: 12
+- Sous-catégories avec taux fondée: 47
+- Segments avec taux fondée: 4
+
+================================================================================
+RÉSULTATS XGBoost
+================================================================================
+
+Seuils optimaux:
+  Seuil BAS (Rejet)      : 0.4300
+  Seuil HAUT (Validation): 0.5000
+
+Métriques:
+  Accuracy  : 0.9986
+  Precision : 0.9995
+  Recall    : 0.9977
+  F1-Score  : 0.9986
+  ROC-AUC   : 1.0000
+
+Performance financière:
+  Gain NET  : 1,351,940 DH
+  Cas auto  : 8000 (100.0%)
+
+================================================================================
+🏆 MEILLEUR MODÈLE: XGBoost
+================================================================================
+Critère: Gain NET maximal
+Gain NET: 1,351,940 DH
+

@@ -198,13 +198,13 @@ def make_predictions(model, X_processed, threshold_low, threshold_high):
     for prob in y_prob:
         if prob <= threshold_low:
             decisions.append('Rejet Auto')
-            decisions_code.append(0)
+            decisions_code.append(-1)  # -1 pour rejet
         elif prob >= threshold_high:
             decisions.append('Validation Auto')
-            decisions_code.append(1)
+            decisions_code.append(1)  # 1 pour fondée
         else:
             decisions.append('Audit Humain')
-            decisions_code.append(-1)
+            decisions_code.append(0)  # 0 pour audit
 
     # Statistiques
     n_rejet = decisions.count('Rejet Auto')
@@ -226,32 +226,39 @@ def make_predictions(model, X_processed, threshold_low, threshold_high):
 
 def apply_business_rule(df_results):
     """
-    Appliquer la règle métier: 1 validation auto par client par année
+    Appliquer les règles métier:
+    1. Maximum 1 validation automatique par client par an
+    2. Montant validé ≤ PNB de l'année dernière
 
-    Règle: Un client ne peut avoir qu'une seule validation automatique par an.
-    Les autres validations automatiques sont converties en Audit Humain.
+    Les validations ne respectant pas ces règles sont converties en Audit Humain.
     """
     print("\n" + "="*80)
-    print("📋 APPLICATION DE LA RÈGLE MÉTIER")
+    print("📋 APPLICATION DES RÈGLES MÉTIER")
     print("="*80)
 
     if 'Date de Qualification' not in df_results.columns:
-        print("⚠️  Colonne 'Date de Qualification' manquante, règle métier non applicable")
+        print("⚠️  Colonne 'Date de Qualification' manquante, règles métier non applicables")
         return df_results
 
     df = df_results.copy()
+
+    # Initialiser colonne pour raisons d'audit
+    df['Raison_Audit'] = ''
 
     # Convertir dates
     df['Date de Qualification'] = pd.to_datetime(df['Date de Qualification'], errors='coerce')
 
     # Extraire année et identifiant client
     if 'Identifiant client' not in df.columns and 'ID Client' not in df.columns:
-        print("⚠️  Colonne identifiant client manquante, règle métier non applicable")
+        print("⚠️  Colonne identifiant client manquante, règles métier non applicables")
         return df_results
 
     client_col = 'Identifiant client' if 'Identifiant client' in df.columns else 'ID Client'
 
     df['annee'] = df['Date de Qualification'].dt.year
+
+    # ========== RÈGLE #1: 1 validation par client par an ==========
+    print("\n🔍 Règle #1: Maximum 1 validation automatique par client par an")
 
     # Trier par date pour garder la première validation
     df = df.sort_values(['annee', client_col, 'Date de Qualification'])
@@ -259,17 +266,61 @@ def apply_business_rule(df_results):
     # Compter validations par client/année
     df['validation_number'] = df.groupby([client_col, 'annee']).cumcount() + 1
 
-    # Appliquer la règle
-    mask_to_audit = (df['Decision_Modele'] == 'Validation Auto') & (df['validation_number'] > 1)
+    # Appliquer la règle #1
+    mask_rule1 = (df['Decision_Modele'] == 'Validation Auto') & (df['validation_number'] > 1)
 
-    n_changed = mask_to_audit.sum()
+    n_changed_rule1 = mask_rule1.sum()
+
+    if n_changed_rule1 > 0:
+        df.loc[mask_rule1, 'Decision_Modele'] = 'Audit Humain'
+        df.loc[mask_rule1, 'Decision_Code'] = 0  # 0 pour audit humain
+        df.loc[mask_rule1, 'Raison_Audit'] = 'Règle #1: >1 validation/client/an'
+
+        print(f"✅ {n_changed_rule1} validations converties en Audit Humain")
+    else:
+        print(f"✅ Aucune conversion nécessaire")
+
+    # ========== RÈGLE #2: Montant ≤ PNB année dernière ==========
+    print("\n🔍 Règle #2: Montant demandé ≤ PNB année dernière")
+
+    n_changed_rule2 = 0
+
+    # Vérifier colonnes nécessaires
+    if 'Montant demandé' in df.columns and 'PNB analytique (vision commerciale) cumulé' in df.columns:
+        # Pour les validations automatiques, vérifier que montant ≤ PNB
+        mask_rule2 = (
+            (df['Decision_Modele'] == 'Validation Auto') &
+            (df['Montant demandé'] > df['PNB analytique (vision commerciale) cumulé']) &
+            (df['PNB analytique (vision commerciale) cumulé'] > 0)  # PNB doit être positif
+        )
+
+        n_changed_rule2 = mask_rule2.sum()
+
+        if n_changed_rule2 > 0:
+            df.loc[mask_rule2, 'Decision_Modele'] = 'Audit Humain'
+            df.loc[mask_rule2, 'Decision_Code'] = 0  # 0 pour audit humain
+            # Ajouter la raison (peut s'ajouter à la règle #1 si déjà présente)
+            existing_reason = df.loc[mask_rule2, 'Raison_Audit']
+            df.loc[mask_rule2, 'Raison_Audit'] = existing_reason.apply(
+                lambda x: (x + ' | ' if x else '') + 'Règle #2: Montant > PNB'
+            )
+
+            print(f"✅ {n_changed_rule2} validations converties en Audit Humain")
+        else:
+            print(f"✅ Aucune conversion nécessaire")
+    else:
+        print(f"⚠️  Colonnes 'Montant demandé' ou 'PNB' manquantes - Règle #2 non applicable")
+
+    # ========== RÉSUMÉ ==========
+    n_changed = n_changed_rule1 + n_changed_rule2
 
     if n_changed > 0:
-        df.loc[mask_to_audit, 'Decision_Modele'] = 'Audit Humain'
-        df.loc[mask_to_audit, 'Decision_Code'] = -1
-
-        print(f"✅ Règle métier appliquée:")
-        print(f"   {n_changed} validations converties en Audit Humain")
+        print(f"\n" + "="*80)
+        print(f"📊 RÉSUMÉ DES RÈGLES MÉTIER")
+        print(f"="*80)
+        print(f"   Règle #1 (1 validation/client/an): {n_changed_rule1} conversions")
+        print(f"   Règle #2 (Montant ≤ PNB):          {n_changed_rule2} conversions")
+        print(f"   TOTAL:                             {n_changed} conversions")
 
         # Nouvelles stats
         n_rejet = (df['Decision_Modele'] == 'Rejet Auto').sum()
@@ -277,12 +328,12 @@ def apply_business_rule(df_results):
         n_audit = (df['Decision_Modele'] == 'Audit Humain').sum()
         n_total = len(df)
 
-        print(f"\n📊 Nouvelle répartition:")
+        print(f"\n📊 Nouvelle répartition après règles métier:")
         print(f"   Rejet Auto       : {n_rejet:6d} ({100*n_rejet/n_total:5.1f}%)")
         print(f"   Audit Humain     : {n_audit:6d} ({100*n_audit/n_total:5.1f}%)")
         print(f"   Validation Auto  : {n_validation:6d} ({100*n_validation/n_total:5.1f}%)")
     else:
-        print("✅ Aucune modification nécessaire")
+        print("\n✅ Aucune conversion nécessaire - Toutes les validations respectent les règles métier")
 
     # Supprimer colonnes temporaires
     df = df.drop(['annee', 'validation_number'], axis=1, errors='ignore')
@@ -312,7 +363,7 @@ def export_results(df_original, df_processed, y_prob, decisions, decisions_code,
     print(f"   Colonnes ajoutées:")
     print(f"   - Probabilite_Fondee  : Probabilité prédite [0-1]")
     print(f"   - Decision_Modele     : Rejet Auto / Audit Humain / Validation Auto")
-    print(f"   - Decision_Code       : 0 / -1 / 1")
+    print(f"   - Decision_Code       : -1 (Rejet) / 0 (Audit) / 1 (Fondée)")
 
     return df_results
 

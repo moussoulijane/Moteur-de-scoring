@@ -36,7 +36,8 @@ class DistributionShiftDiagnostic:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Colonnes importantes
-        self.numeric_cols = ['Montant demandé', 'Délai estimé', 'anciennete_annees']
+        self.numeric_cols = ['Montant demandé', 'Délai estimé', 'anciennete_annees',
+                            'PNB analytique (vision commerciale) cumulé']
         self.categorical_cols = ['Famille Produit', 'Catégorie', 'Sous-catégorie', 'Segment', 'Marché']
 
     def load_data(self):
@@ -52,6 +53,7 @@ class DistributionShiftDiagnostic:
         print(f"✅ Nouvelles données (inférence): {len(self.df_new)} lignes")
 
         # Nettoyer les colonnes numériques
+        from preprocessor_v2 import ProductionPreprocessorV2
         preprocessor = ProductionPreprocessorV2()
         for df in [self.df_ref, self.df_new]:
             for col in self.numeric_cols:
