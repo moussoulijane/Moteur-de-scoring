@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  # API Service (Real-time inference)
+  api:
+    build: .
+    container_name: scoring-api
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./models:/app/models
+      - ./logs:/app/logs
+      - ./config:/app/config
+    environment:
+      - FLASK_ENV=production
+      - PYTHONUNBUFFERED=1
+    command: gunicorn -w 4 -b 0.0.0.0:5000 src.api.app:app
+    restart: unless-stopped
+
+  # Training Service (Optional - for scheduled training)
+  training:
+    build: .
+    container_name: scoring-training
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./config:/app/config
+      - ./outputs:/app/outputs
+    command: python train_model.py --train data/raw/reclamations_2024.xlsx --test data/raw/reclamations_2025.xlsx
+    profiles:
+      - training

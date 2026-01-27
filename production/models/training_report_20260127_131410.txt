@@ -1,0 +1,38 @@
+================================================================================
+TRAINING REPORT - PRODUCTION MODEL
+Date: 2026-01-27 13:14:10
+================================================================================
+
+DATA:
+Training samples: 33000
+Test samples: 8000
+
+FEATURES:
+Total features: 29
+Families with robust stats: 4
+Categories with robust stats: 12
+Min samples for stats: 30
+
+================================================================================
+XGBOOST RESULTS
+================================================================================
+
+Thresholds:
+  Low (Reject)     : 0.4300
+  High (Validate)  : 0.5000
+
+Metrics:
+  Accuracy  : 0.9986
+  Precision : 0.9995
+  Recall    : 0.9977
+  F1-Score  : 0.9986
+  ROC-AUC   : 1.0000
+
+Performance:
+  Net Gain      : 1,351,940 DH
+  Automation    : 100.0%
+
+================================================================================
+🏆 BEST MODEL: XGBOOST
+================================================================================
+Net Gain: 1,351,940 DH

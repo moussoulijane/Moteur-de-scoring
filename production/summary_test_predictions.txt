@@ -1,0 +1,18 @@
+================================================================================
+BATCH INFERENCE SUMMARY
+Date: 2026-01-27 13:15:16
+================================================================================
+
+Input file: ../data/raw/reclamations_2025.xlsx
+Output file: test_predictions.xlsx
+Model: best
+Business rules applied: True
+
+STATISTICS:
+--------------------------------------------------------------------------------
+Total complaints: 8000
+Rejet Auto: 4021 (50.3%)
+Audit Humain: 0 (0.0%)
+Validation Auto: 3979 (49.7%)
+
+Automation rate: 100.0%

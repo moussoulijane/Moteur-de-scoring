@@ -1,0 +1,7 @@
+Best model: xgboost
+Trained on: 2026-01-27 13:14:10
+Net Gain: 1,351,940 DH
+Threshold Low: 0.4300
+Threshold High: 0.5000
+F1-Score: 0.9986
+ROC-AUC: 1.0000
